@@ -4,6 +4,24 @@ import aiohttp
 import os
 from discord.ext import tasks, commands
 from datetime import datetime
+from flask import Flask
+import threading
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "I'm alive"
+
+def run():
+    app.run(host='0.0.0.0', port=10000)
+
+def keep_alive():
+    t = threading.Thread(target=run)
+    t.start()
+
+# Вызови эту функцию прямо перед строкой bot.run(TOKEN)
+
 
 # НАСТРОЙКИ (будут браться из настроек Render)
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -53,6 +71,6 @@ async def check_time():
 @check_time.before_loop
 async def before_check_time():
     await bot.wait_until_ready()
-
+keep_alive()
 bot.run(TOKEN)
           
