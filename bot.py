@@ -20,6 +20,7 @@ def get_text_by_time(target_time):
     try:
         response = requests.get(url)
         if response.status_code == 200:
+            response.encoding = 'utf-8'  # Корректная кодировка для кириллицы
             lines = response.text.splitlines()
             reader = csv.reader(lines)
             
@@ -62,6 +63,7 @@ async def test_sheet(ctx):
     try:
         response = requests.get(url)
         if response.status_code == 200:
+            response.encoding = 'utf-8'  # Корректная кодировка для кириллицы
             lines = response.text.splitlines()
             reader = csv.reader(lines)
             
