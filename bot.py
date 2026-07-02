@@ -53,8 +53,7 @@ async def check_schedule_and_send():
             await channel.send(text_to_send)
             print(f"Успешно отправлено сообщение для времени {current_time}")
 
-# Запуск таймера при старте бота
-@bot.event
+# Тестовая команда для проверки связи с Google Таблицей
 @bot.command(name="тест")
 async def test_sheet(ctx):
     sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
@@ -76,7 +75,9 @@ async def test_sheet(ctx):
             await ctx.send(f"Ошибка подключения к таблице! Статус: {response.status_code}")
     except Exception as e:
         await ctx.send(f"Произошла ошибка при тесте: {e}")
-        
+
+# Запуск таймера при старте бота
+@bot.event
 async def on_ready():
     print(f"Бот {bot.user.name} успешно запущен и готов к работе!")
     if not check_schedule_and_send.is_running():
