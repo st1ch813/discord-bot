@@ -2,25 +2,18 @@ import os
 import datetime
 import requests
 import csv
-from discord.ext import tasks, commands
-import discord
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, request, redirect, url_for
 import threading
+import time
 
 # ================= НАСТРОЙКА РОЛИ =================
-ROLE_ID = "1522143408817311744"
+ROLE_ID = "1447219553259094219"
 # ==================================================
 
-# Инициализация интентов и бота
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
-
 # Глобальные переменные статуса
-start_time = None
-is_bot_enabled = True  # Флаг: включена ли рассылка сообщений
+start_time = datetime.datetime.utcnow()
+is_bot_enabled = True  # Флаг паузы
 
-# Вспомогательная функция для парсинга времени из таблицы (в формат "HH:MM")
 def parse_time(time_str):
     try:
         time_str = time_str.strip()
@@ -32,7 +25,6 @@ def parse_time(time_str):
     except:
         return None
 
-# Функция для чтения данных из Google Таблицы
 def get_text_by_time(target_time):
     sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
@@ -57,7 +49,6 @@ def get_text_by_time(target_time):
         print(f"Ошибка при обращении к таблице: {e}")
     return None
 
-# Функция для получения списка вообще всех контрактов для сайта
 def get_all_contracts_from_sheet():
     sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
@@ -72,189 +63,54 @@ def get_all_contracts_from_sheet():
                 if len(row) >= 2:
                     time_part = row[0].strip()
                     text_part = row[1].strip()
-                    
-                    # Пропускаем строку заголовков или строки без времени
                     if ":" not in time_part or "время" in time_part.lower():
                         continue
-                        
                     expiry_part = row[2].strip() if len(row) >= 3 else ""
                     if "срок годности" in expiry_part.lower():
                         expiry_part = ""
-
                     contracts.append({
                         "time": time_part,
                         "text": text_part,
                         "expiry": expiry_part if expiry_part else "Не указан"
                     })
     except Exception as e:
-        print(f"Ошибка получения всех контрактов: {e}")
+        print(f"Ошибка получения контрактов: {e}")
     return contracts
 
-# Функция для поиска следующего запланированного сообщения и срока его контракта
-def get_next_message_info():
-    if not is_bot_enabled:
-        return "Рассылка на паузе", "--", ""
-
-    sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
-    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
-    
-    now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
-    current_minutes = now.hour * 60 + now.minute
-    
-    next_text = "Нет запланированных сообщений"
-    time_left_str = "--"
-    contract_expiry = ""
-    min_diff = 9999
-    
-    try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            response.encoding = 'utf-8'
-            lines = response.text.splitlines()
-            reader = csv.reader(lines)
-            
-            for row in reader:
-                if len(row) >= 2:
-                    time_part = row[0].strip()
-                    if not time_part or ":" not in time_part:
-                        continue
-                    times_list = time_part.split()
-                    for single_time in times_list:
-                        sheet_time = parse_time(single_time)
-                        if not sheet_time:
-                            continue
-                        
-                        t_hours, t_mins = map(int, sheet_time.split(':'))
-                        sheet_minutes = t_hours * 60 + t_mins
-                        
-                        diff = sheet_minutes - current_minutes
-                        if diff <= 0:
-                            diff += 1440
-                            
-                        if diff < min_diff:
-                            min_diff = diff
-                            next_text = row[1].strip()
-                            if len(row) >= 3 and "срок годности" not in row[2].lower():
-                                contract_expiry = row[2].strip()
-                            else:
-                                contract_expiry = ""
-            
-            if min_diff != 9999:
-                if min_diff >= 60:
-                    time_left_str = f"{min_diff // 60} ч. {min_diff % 60} мин."
-                else:
-                    time_left_str = f"{min_diff} мин."
-    except Exception as e:
-        next_text = f"Ошибка проверки: {e}"
-        
-    return next_text, time_left_str, contract_expiry
-
-# Фоновый цикл проверки времени
-@tasks.loop(minutes=1)
-async def check_schedule_and_send():
-    if not is_bot_enabled:
+def send_to_webhook(text):
+    webhook_url = os.environ.get('DISCORD_WEBHOOK_URL')
+    if not webhook_url:
+        print("Ошибка: DISCORD_WEBHOOK_URL не настроен!")
         return
 
-    now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
-    current_time = now.strftime("%H:%M")
-    text_to_send = get_text_by_time(current_time)
-    if text_to_send:
-        channel_id = int(os.environ.get('DISCORD_CHANNEL_ID'))
-        channel = bot.get_channel(channel_id)
-        if channel:
-            if ROLE_ID and ROLE_ID.isdigit():
-                final_text = f"<@&{ROLE_ID}>\n{text_to_send}"
-            else:
-                final_text = text_to_send
-                
-            await channel.send(final_text)
-            print(f"Успешно отправлено сообщение для времени {current_time}")
-
-# --- Команда !пауза ---
-@bot.command(name="пауза")
-async def toggle_bot(ctx):
-    global is_bot_enabled
-    is_bot_enabled = not is_bot_enabled
-    if is_bot_enabled:
-        await ctx.send("Бот не на паузе (работает)")
+    if ROLE_ID and ROLE_ID.isdigit():
+        final_text = f"<@&{ROLE_ID}>\n{text}"
     else:
-        await ctx.send("Бот на паузе")
+        final_text = text
 
-# Тестовая команда
-@bot.command(name="тест")
-async def test_sheet(ctx):
-    sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
-    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    payload = {"content": final_text}
     try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            response.encoding = 'utf-8'
-            lines = response.text.splitlines()
-            reader = csv.reader(lines)
-            data_preview = f"Содержимое таблицы, которое видит бот (Рассылка: {'ВКЛ' if is_bot_enabled else 'ПАУЗА'}):\n"
-            has_rows = False
-            for row in reader:
-                if len(row) >= 2:
-                    time_part = row[0].strip()
-                    text_part = row[1].strip()
-                    if ":" not in time_part:
-                        continue
-                    has_rows = True
-                    display_text = text_part[:40] if text_part else "[Пусто]"
-                    expiry_part = ""
-                    if len(row) >= 3 and row[2].strip() and "срок годности" not in row[2].lower():
-                        expiry_part = f" | Срок: `{row[2].strip()}`"
-                    data_preview += f"Времена: `{time_part}` | Текст: `{display_text}...`{expiry_part}\n"
-            if has_rows:
-                await ctx.send(data_preview)
-            else:
-                await ctx.send("Таблица пустая!")
+        res = requests.post(webhook_url, json=payload)
+        if res.status_code in [200, 204]:
+            print("Сообщение успешно отправлено через Вебхук!")
         else:
-            await ctx.send(f"Ошибка таблицы! Status: {response.status_code}")
+            print(f"Ошибка вебхука: {res.status_code}")
     except Exception as e:
-        await ctx.send(f"Ошибка при тесте: {e}")
+        print(f"Не удалось отправить вебхук: {e}")
 
-# Команда !логи
-@bot.command(name="логи")
-async def show_logs(ctx):
-    global start_time
-    if start_time is None:
-        await ctx.send("Ошибка: время запуска бота не зафиксировано.")
-        return
+# Фоновый цикл проверки времени (работает без привязки к дискорд-клиенту)
+def cron_loop():
+    print("Фоновый таймер вебхука запущен.")
+    while True:
+        if is_bot_enabled:
+            now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
+            current_time = now.strftime("%H:%M")
+            text_to_send = get_text_by_time(current_time)
+            if text_to_send:
+                send_to_webhook(text_to_send)
+        time.sleep(60) # Проверяем раз в минуту
 
-    uptime = datetime.datetime.utcnow() - start_time
-    days = uptime.days
-    hours, remainder = divmod(uptime.seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-
-    next_msg, next_time, expiry = get_next_message_info()
-    ping = round(bot.latency * 1000)
-
-    status_str = "🟢 РАБОТАЕТ" if is_bot_enabled else "🟡 НА ПАУЗЕ"
-    expiry_str = f"\n⏳ **Срок годности контракта:** `{expiry}`" if expiry else ""
-
-    report = (
-        "📊 **СТАТИСТИКА И СТАТУС БОТА**\n"
-        f"⚙️ **Режим рассылки:** `{status_str}`\n"
-        f"⏱ **Время работы (Uptime):** `{days} дн. {hours} ч. {minutes} мин. {seconds} сек.`\n"
-        f"📶 **Текущий пинг:** `{ping} мс`\n"
-        f"📅 **Следующая отправка через:** `{next_time}`\n"
-        f"📝 **Текст следующего сообщения:** `{next_msg[:100]}`"
-        f"{expiry_str}"
-    )
-    await ctx.send(report)
-
-# Запуск таймера при старте бота
-@bot.event
-async def on_ready():
-    global start_time
-    if start_time is None:
-        start_time = datetime.datetime.utcnow()
-    print(f"Бот {bot.user.name} успешно запущен!")
-    if not check_schedule_and_send.is_running():
-        check_schedule_and_send.start()
-
-# --- Flask-вебсервер с обновленным дизайном таблицы ---
+# --- Flask Веб-сервер ---
 app = Flask('')
 
 HTML_PAGE = """
@@ -262,58 +118,51 @@ HTML_PAGE = """
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Мониторинг Бота</title>
+    <title>Мониторинг Контрактов (Вебхук)</title>
     <style>
         body { font-family: sans-serif; background: #121214; color: #e1e1e6; padding: 40px; text-align: center; }
-        .container { background: #202024; padding: 25px; border-radius: 8px; display: inline-block; text-align: left; min-width: 500px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); margin-bottom: 25px; }
+        .container { background: #202024; padding: 25px; border-radius: 8px; display: inline-block; text-align: left; min-width: 500px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
         h1, h2 { margin-top: 0; color: #04d361; font-size: 24px; }
-        h2 { font-size: 20px; color: #8257e5; margin-top: 20px; }
+        h2 { font-size: 20px; color: #8257e5; margin-top: 25px; }
         .param { margin: 12px 0; font-size: 16px; }
         .value { color: #8257e5; font-weight: bold; }
         .status-on { color: #04d361; font-weight: bold; }
         .status-off { color: #f75a68; font-weight: bold; }
-        .next-box { background: #181825; padding: 12px; border-radius: 6px; margin-top: 15px; border-left: 4px solid #89b4fa; }
-        .next-title { font-size: 14px; color: #a6adc8; margin-bottom: 5px; }
         
-        /* Стили для таблицы */
+        /* Кнопка переключения паузы */
+        .btn { background: #8257e5; color: white; border: none; padding: 10px 20px; border-radius: 5px; font-weight: bold; cursor: pointer; font-size: 16px; margin-top: 10px; transition: 0.2s; }
+        .btn:hover { background: #9466ff; }
+        .btn-pause { background: #f75a68; }
+        .btn-pause:hover { background: #ff6b7b; }
+
         table { width: 100%; border-collapse: collapse; margin-top: 15px; background: #181825; border-radius: 6px; overflow: hidden; }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #29292e; font-size: 14px; }
         th { background-color: #29292e; color: #04d361; font-weight: bold; }
-        tr:hover { background-color: #202024; }
-        .td-time { color: #a6e3a1; font-weight: bold; white-space: nowrap; }
-        .td-expiry { color: #f9e2af; font-weight: bold; white-space: nowrap; }
-        .td-text { color: #e1e1e6; word-break: break-word; }
+        .td-time { color: #a6e3a1; font-weight: bold; }
+        .td-expiry { color: #f9e2af; font-weight: bold; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Панель управления Ботом</h1>
-        <div class="param">Статус рассылки: <span id="status">Загрузка...</span></div>
-        <div class="param">Имя бота: <span id="bot_name" class="value">...</span></div>
-        <div class="param">Пинг Дискорда: <span id="ping" class="value">0</span> мс</div>
-        <div class="param">Время сервера (КВ/МСК): <span id="time" class="value">00:00:00</span></div>
-        <div class="param">Таймер рассылки: <span id="loop" class="value">...</span></div>
+        <h1>Управление Рассылкой</h1>
+        <div class="param">Статус системы: <span id="status">Загрузка...</span></div>
+        <div class="param">Время сервера (КВ/МСК): <span id="time">00:00:00</span></div>
         
-        <div class="next-box">
-            <div class="next-title">СЛЕДУЮЩЕЕ СООБЩЕНИЕ:</div>
-            <div id="next_text" style="font-weight: bold; color: #f5c2e7;">Загрузка...</div>
-            <div style="margin-top: 5px; font-size: 14px;">Отправка через: <span id="next_time" style="color: #a6e3a1; font-weight: bold;">--</span></div>
-            <div style="margin-top: 5px; font-size: 14px;">Срок контракта: <span id="contract_expiry" style="color: #f9e2af;">--</span></div>
-        </div>
+        <form action="/toggle" method="POST">
+            <button type="submit" id="action_btn" class="btn">Загрузка...</button>
+        </form>
 
-        <h2>📋 Все активные контракты в таблице</h2>
+        <h2>📋 Все активные контракты</h2>
         <table>
             <thead>
                 <tr>
                     <th style="width: 15%;">Время</th>
-                    <th style="width: 60%;">Текст контракта (Колонка B)</th>
-                    <th style="width: 25%;">Срок годности (Колонка C)</th>
+                    <th style="width: 60%;">Текст контракта</th>
+                    <th style="width: 25%;">Срок годности</th>
                 </tr>
             </thead>
             <tbody id="contracts_table_body">
-                <tr>
-                    <td colspan="3" style="text-align: center; color: #a6adc8;">Загрузка списка контрактов...</td>
-                </tr>
+                <tr><td colspan="3" style="text-align: center;">Загрузка списка...</td></tr>
             </tbody>
         </table>
     </div>
@@ -325,43 +174,32 @@ HTML_PAGE = """
                 let data = await res.json();
                 
                 let statusElem = document.getElementById('status');
-                statusElem.innerText = data.status;
+                let btn = document.getElementById('action_btn');
+                
                 if (data.is_enabled) {
+                    statusElem.innerText = "РАБОТАЕТ ЧЕРЕЗ ВЕБХУК";
                     statusElem.className = "status-on";
+                    btn.innerText = "⏸ Поставить на паузу";
+                    btn.className = "btn btn-pause";
                 } else {
+                    statusElem.innerText = "НА ПАУЗЕ";
                     statusElem.className = "status-off";
+                    btn.innerText = "▶️ Запустить рассылку";
+                    btn.className = "btn";
                 }
 
-                document.getElementById('bot_name').innerText = data.bot_name;
-                document.getElementById('ping').innerText = data.ping;
-                document.getElementById('loop').innerText = data.loop_status;
-                document.getElementById('next_text').innerText = data.next_msg;
-                document.getElementById('next_time').innerText = data.next_time_left;
-                document.getElementById('contract_expiry').innerText = data.contract_expiry || "Не указан";
-
-                // Обновление таблицы контрактов
                 let tableBody = document.getElementById('contracts_table_body');
                 tableBody.innerHTML = "";
-                
                 if (data.all_contracts && data.all_contracts.length > 0) {
                     data.all_contracts.forEach(c => {
                         let row = document.createElement('tr');
-                        row.innerHTML = `
-                            <td class="td-time">${c.time}</td>
-                            <td class="td-text">${c.text}</td>
-                            <td class="td-expiry">${c.expiry}</td>
-                        `;
+                        row.innerHTML = `<td class="td-time">${c.time}</td><td>${c.text}</td><td class="td-expiry">${c.expiry}</td>`;
                         tableBody.appendChild(row);
                     });
                 } else {
-                    tableBody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #f75a68;">Контракты не найдены в Google Таблице</td></tr>`;
+                    tableBody.innerHTML = `<tr><td colspan="3" style="text-align: center;">Таблица пуста</td></tr>`;
                 }
-
-            } catch(e) {
-                let statusElem = document.getElementById('status');
-                statusElem.innerText = "ОТКЛЮЧЕН";
-                statusElem.className = "status-off";
-            }
+            } catch(e) { }
         }
 
         setInterval(() => {
@@ -371,7 +209,7 @@ HTML_PAGE = """
             document.getElementById('time').innerText = targetTime.toTimeString().split(' ')[0];
         }, 1000);
 
-        setInterval(updateStats, 5000);
+        setInterval(updateStats, 4000);
         updateStats();
     </script>
 </body>
@@ -382,39 +220,21 @@ HTML_PAGE = """
 def index():
     return render_template_string(HTML_PAGE)
 
+@app.route('/toggle', methods=['POST'])
+def toggle_status():
+    global is_bot_enabled
+    is_bot_enabled = not is_bot_enabled
+    return redirect(url_for('index'))
+
 @app.route('/api/stats')
 def get_stats():
-    is_ready = bot.is_ready()
-    loop_active = check_schedule_and_send.is_running()
-    
-    if not is_ready:
-        status_text = "ЗАГРУЖАЕТСЯ"
-    elif not is_bot_enabled:
-        status_text = "ПАУЗА (ОТКЛЮЧЕНА)"
-    else:
-        status_text = "РАБОТАЕТ 24/7"
-
-    next_msg, next_time_left, contract_expiry = get_next_message_info()
-    all_contracts = get_all_contracts_from_sheet()
-
     return jsonify({
-        "status": status_text,
         "is_enabled": is_bot_enabled,
-        "bot_name": bot.user.name if is_ready else "Неизвестно",
-        "ping": round(bot.latency * 1000) if is_ready else 0,
-        "loop_status": "Активен" if (loop_active and is_bot_enabled) else "На паузе",
-        "next_msg": next_msg,
-        "next_time_left": next_time_left,
-        "contract_expiry": contract_expiry,
-        "all_contracts": all_contracts
+        "all_contracts": get_all_contracts_from_sheet()
     })
 
-def run(): 
+if __name__ == '__main__':
+    # Запуск фонового потока отправки
+    threading.Thread(target=cron_loop, daemon=True).start()
+    # Запуск веб-сайта
     app.run(host='0.0.0.0', port=10000)
-
-def keep_alive(): 
-    threading.Thread(target=run).start()
-
-# Запуск веб-сервера и бота
-keep_alive()
-bot.run(os.environ.get('DISCORD_TOKEN'))
