@@ -57,6 +57,39 @@ def get_text_by_time(target_time):
         print(f"Ошибка при обращении к таблице: {e}")
     return None
 
+# Функция для получения списка вообще всех контрактов для сайта
+def get_all_contracts_from_sheet():
+    sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    contracts = []
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            response.encoding = 'utf-8'
+            lines = response.text.splitlines()
+            reader = csv.reader(lines)
+            for row in reader:
+                if len(row) >= 2:
+                    time_part = row[0].strip()
+                    text_part = row[1].strip()
+                    
+                    # Пропускаем строку заголовков или строки без времени
+                    if ":" not in time_part or "время" in time_part.lower():
+                        continue
+                        
+                    expiry_part = row[2].strip() if len(row) >= 3 else ""
+                    if "срок годности" in expiry_part.lower():
+                        expiry_part = ""
+
+                    contracts.append({
+                        "time": time_part,
+                        "text": text_part,
+                        "expiry": expiry_part if expiry_part else "Не указан"
+                    })
+    except Exception as e:
+        print(f"Ошибка получения всех контрактов: {e}")
+    return contracts
+
 # Функция для поиска следующего запланированного сообщения и срока его контракта
 def get_next_message_info():
     if not is_bot_enabled:
@@ -101,7 +134,6 @@ def get_next_message_info():
                         if diff < min_diff:
                             min_diff = diff
                             next_text = row[1].strip()
-                            # Читаем колонку C (индекс 2), если она существует и это не заголовок
                             if len(row) >= 3 and "срок годности" not in row[2].lower():
                                 contract_expiry = row[2].strip()
                             else:
@@ -117,7 +149,7 @@ def get_next_message_info():
         
     return next_text, time_left_str, contract_expiry
 
-# Фоновый цикл, который проверяет время каждую минуту
+# Фоновый цикл проверки времени
 @tasks.loop(minutes=1)
 async def check_schedule_and_send():
     if not is_bot_enabled:
@@ -143,13 +175,12 @@ async def check_schedule_and_send():
 async def toggle_bot(ctx):
     global is_bot_enabled
     is_bot_enabled = not is_bot_enabled
-    
     if is_bot_enabled:
         await ctx.send("Бот не на паузе (работает)")
     else:
         await ctx.send("Бот на паузе")
 
-# Тестовая команда для проверки связи с Google Таблицей (теперь показывает Колонку C)
+# Тестовая команда
 @bot.command(name="тест")
 async def test_sheet(ctx):
     sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
@@ -166,28 +197,22 @@ async def test_sheet(ctx):
                 if len(row) >= 2:
                     time_part = row[0].strip()
                     text_part = row[1].strip()
-                    
                     if ":" not in time_part:
                         continue
-                    
                     has_rows = True
                     display_text = text_part[:40] if text_part else "[Пусто]"
-                    
-                    # Проверяем колонку C
                     expiry_part = ""
                     if len(row) >= 3 and row[2].strip() and "срок годности" not in row[2].lower():
                         expiry_part = f" | Срок: `{row[2].strip()}`"
-                        
                     data_preview += f"Времена: `{time_part}` | Текст: `{display_text}...`{expiry_part}\n"
-            
             if has_rows:
                 await ctx.send(data_preview)
             else:
-                await ctx.send("Таблица пустая или не содержит корректного времени!")
+                await ctx.send("Таблица пустая!")
         else:
-            await ctx.send(f"Ошибка подключения к таблице! Status: {response.status_code}")
+            await ctx.send(f"Ошибка таблицы! Status: {response.status_code}")
     except Exception as e:
-        await ctx.send(f"Произошла ошибка при тесте: {e}")
+        await ctx.send(f"Ошибка при тесте: {e}")
 
 # Команда !логи
 @bot.command(name="логи")
@@ -225,12 +250,11 @@ async def on_ready():
     global start_time
     if start_time is None:
         start_time = datetime.datetime.utcnow()
-        
-    print(f"Бот {bot.user.name} успешно запущен и готов к работе!")
+    print(f"Бот {bot.user.name} успешно запущен!")
     if not check_schedule_and_send.is_running():
         check_schedule_and_send.start()
 
-# --- Flask-вебсервер ---
+# --- Flask-вебсервер с обновленным дизайном таблицы ---
 app = Flask('')
 
 HTML_PAGE = """
@@ -241,14 +265,24 @@ HTML_PAGE = """
     <title>Мониторинг Бота</title>
     <style>
         body { font-family: sans-serif; background: #121214; color: #e1e1e6; padding: 40px; text-align: center; }
-        .container { background: #202024; padding: 25px; border-radius: 8px; display: inline-block; text-align: left; min-width: 350px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
-        h1 { margin-top: 0; color: #04d361; font-size: 24px; }
+        .container { background: #202024; padding: 25px; border-radius: 8px; display: inline-block; text-align: left; min-width: 500px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); margin-bottom: 25px; }
+        h1, h2 { margin-top: 0; color: #04d361; font-size: 24px; }
+        h2 { font-size: 20px; color: #8257e5; margin-top: 20px; }
         .param { margin: 12px 0; font-size: 16px; }
         .value { color: #8257e5; font-weight: bold; }
         .status-on { color: #04d361; font-weight: bold; }
         .status-off { color: #f75a68; font-weight: bold; }
         .next-box { background: #181825; padding: 12px; border-radius: 6px; margin-top: 15px; border-left: 4px solid #89b4fa; }
         .next-title { font-size: 14px; color: #a6adc8; margin-bottom: 5px; }
+        
+        /* Стили для таблицы */
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; background: #181825; border-radius: 6px; overflow: hidden; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #29292e; font-size: 14px; }
+        th { background-color: #29292e; color: #04d361; font-weight: bold; }
+        tr:hover { background-color: #202024; }
+        .td-time { color: #a6e3a1; font-weight: bold; white-space: nowrap; }
+        .td-expiry { color: #f9e2af; font-weight: bold; white-space: nowrap; }
+        .td-text { color: #e1e1e6; word-break: break-word; }
     </style>
 </head>
 <body>
@@ -262,10 +296,26 @@ HTML_PAGE = """
         
         <div class="next-box">
             <div class="next-title">СЛЕДУЮЩЕЕ СООБЩЕНИЕ:</div>
-            <div id="next_text" style="font-weight: bold; word-break: break-all; color: #f5c2e7;">Загрузка...</div>
+            <div id="next_text" style="font-weight: bold; color: #f5c2e7;">Загрузка...</div>
             <div style="margin-top: 5px; font-size: 14px;">Отправка через: <span id="next_time" style="color: #a6e3a1; font-weight: bold;">--</span></div>
             <div style="margin-top: 5px; font-size: 14px;">Срок контракта: <span id="contract_expiry" style="color: #f9e2af;">--</span></div>
         </div>
+
+        <h2>📋 Все активные контракты в таблице</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 15%;">Время</th>
+                    <th style="width: 60%;">Текст контракта (Колонка B)</th>
+                    <th style="width: 25%;">Срок годности (Колонка C)</th>
+                </tr>
+            </thead>
+            <tbody id="contracts_table_body">
+                <tr>
+                    <td colspan="3" style="text-align: center; color: #a6adc8;">Загрузка списка контрактов...</td>
+                </tr>
+            </tbody>
+        </table>
     </div>
 
     <script>
@@ -288,6 +338,25 @@ HTML_PAGE = """
                 document.getElementById('next_text').innerText = data.next_msg;
                 document.getElementById('next_time').innerText = data.next_time_left;
                 document.getElementById('contract_expiry').innerText = data.contract_expiry || "Не указан";
+
+                // Обновление таблицы контрактов
+                let tableBody = document.getElementById('contracts_table_body');
+                tableBody.innerHTML = "";
+                
+                if (data.all_contracts && data.all_contracts.length > 0) {
+                    data.all_contracts.forEach(c => {
+                        let row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td class="td-time">${c.time}</td>
+                            <td class="td-text">${c.text}</td>
+                            <td class="td-expiry">${c.expiry}</td>
+                        `;
+                        tableBody.appendChild(row);
+                    });
+                } else {
+                    tableBody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #f75a68;">Контракты не найдены в Google Таблице</td></tr>`;
+                }
+
             } catch(e) {
                 let statusElem = document.getElementById('status');
                 statusElem.innerText = "ОТКЛЮЧЕН";
@@ -302,7 +371,7 @@ HTML_PAGE = """
             document.getElementById('time').innerText = targetTime.toTimeString().split(' ')[0];
         }, 1000);
 
-        setInterval(updateStats, 4000);
+        setInterval(updateStats, 5000);
         updateStats();
     </script>
 </body>
@@ -326,6 +395,7 @@ def get_stats():
         status_text = "РАБОТАЕТ 24/7"
 
     next_msg, next_time_left, contract_expiry = get_next_message_info()
+    all_contracts = get_all_contracts_from_sheet()
 
     return jsonify({
         "status": status_text,
@@ -335,7 +405,8 @@ def get_stats():
         "loop_status": "Активен" if (loop_active and is_bot_enabled) else "На паузе",
         "next_msg": next_msg,
         "next_time_left": next_time_left,
-        "contract_expiry": contract_expiry
+        "contract_expiry": contract_expiry,
+        "all_contracts": all_contracts
     })
 
 def run(): 
