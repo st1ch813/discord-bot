@@ -132,4 +132,99 @@ async def on_ready():
 # --- Flask-вебсервер ---
 app = Flask('')
 
-HTML_PAGE
+HTML_PAGE = """
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Мониторинг Бота</title>
+    <style>
+        body { font-family: sans-serif; background: #121214; color: #e1e1e6; padding: 40px; text-align: center; }
+        .container { background: #202024; padding: 25px; border-radius: 8px; display: inline-block; text-align: left; min-width: 350px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        h1 { margin-top: 0; color: #04d361; font-size: 24px; }
+        .param { margin: 12px 0; font-size: 16px; }
+        .value { color: #8257e5; font-weight: bold; }
+        .next-box { background: #181825; padding: 12px; border-radius: 6px; margin-top: 15px; border-left: 4px solid #89b4fa; }
+        .next-title { font-size: 14px; color: #a6adc8; margin-bottom: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Панель управления Ботом</h1>
+        <div class="param">Статус: <span id="status" class="value">Загрузка...</span></div>
+        <div class="param">Имя бота: <span id="bot_name" class="value">...</span></div>
+        <div class="param">Пинг Дискорда: <span id="ping" class="value">0</span> мс</div>
+        <div class="param">Время сервера (КВ/МСК): <span id="time" class="value">00:00:00</span></div>
+        <div class="param">Таймер рассылки: <span id="loop" class="value">...</span></div>
+        
+        <div class="next-box">
+            <div class="next-title">СЛЕДУЮЩЕЕ СООБЩЕНИЕ:</div>
+            <div id="next_text" style="font-weight: bold; word-break: break-all; color: #f5c2e7;">Загрузка...</div>
+            <div style="margin-top: 5px; font-size: 14px;">Отправка через: <span id="next_time" style="color: #a6e3a1; font-weight: bold;">--</span></div>
+        </div>
+    </div>
+
+    <script>
+        async function updateStats() {
+            try {
+                let res = await fetch('/api/stats');
+                let data = await res.json();
+                document.getElementById('status').innerText = data.status;
+                document.getElementById('bot_name').innerText = data.bot_name;
+                document.getElementById('ping').innerText = data.ping;
+                document.getElementById('loop').innerText = data.loop_status;
+                document.getElementById('next_text').innerText = data.next_msg;
+                document.getElementById('next_time').innerText = data.next_time_left;
+            } catch(e) {
+                document.getElementById('status').innerText = "ОТКЛЮЧЕН";
+            }
+        }
+
+        setInterval(() => {
+            let now = new Date();
+            let utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+            let targetTime = new Date(utc + (3600000 * 3));
+            document.getElementById('time').innerText = targetTime.toTimeString().split(' ')[0];
+        }, 1000);
+
+        setInterval(updateStats, 4000);
+        updateStats();
+    </script>
+</body>
+</html>
+"""
+
+@app.route('/')
+def index():
+    return render_template_string(HTML_PAGE)
+
+@app.route('/api/stats')
+def get_stats():
+    is_ready = bot.is_ready()
+    loop_active = check_schedule_and_send.is_running()
+    
+    if not is_ready:
+        status_text = "ЗАГРУЖАЕТСЯ"
+    else:
+        status_text = "РАБОТАЕТ 24/7"
+
+    next_msg, next_time_left = get_next_message_info()
+
+    return jsonify({
+        "status": status_text,
+        "bot_name": bot.user.name if is_ready else "Неизвестно",
+        "ping": round(bot.latency * 1000) if is_ready else 0,
+        "loop_status": "Активен" if loop_active else "Остановлен",
+        "next_msg": next_msg,
+        "next_time_left": next_time_left
+    })
+
+def run(): 
+    app.run(host='0.0.0.0', port=10000)
+
+def keep_alive(): 
+    threading.Thread(target=run).start()
+
+# Запуск веб-сервера и бота
+keep_alive()
+bot.run(os.environ.get('DISCORD_TOKEN'))
