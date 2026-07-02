@@ -8,8 +8,6 @@ from flask import Flask, jsonify, render_template_string
 import threading
 
 # ================= НАСТРОЙКА РОЛИ =================
-# Вставь сюда ID роли, которую нужно упоминать (только цифры внутри кавычек)
-# Если оставить пустые кавычки "", бот будет отправлять сообщения БЕЗ упоминания роли.
 ROLE_ID = "1522143408817311744"
 # ==================================================
 
@@ -17,6 +15,9 @@ ROLE_ID = "1522143408817311744"
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# Переменная для хранения точного времени запуска бота
+start_time = None
 
 # Вспомогательная функция для парсинга времени из таблицы (в формат "HH:MM")
 def parse_time(time_str):
@@ -104,7 +105,6 @@ async def check_schedule_and_send():
         channel_id = int(os.environ.get('DISCORD_CHANNEL_ID'))
         channel = bot.get_channel(channel_id)
         if channel:
-            # Формируем текст с упоминанием роли, если ID указан
             if ROLE_ID and ROLE_ID.isdigit():
                 final_text = f"<@&{ROLE_ID}>\n{text_to_send}"
             else:
@@ -130,13 +130,46 @@ async def test_sheet(ctx):
                     data_preview += f"Время: `{row[0]}` | Текст: `{row[1]}`\n"
             await ctx.send(data_preview if len(data_preview) > 40 else "Таблица пустая или нечитаемая!")
         else:
-            await ctx.send(f"Ошибка подключения к таблице! Статус: {response.status_code}")
+            await ctx.send(f"Ошибка подключения к таблице! Status: {response.status_code}")
     except Exception as e:
         await ctx.send(f"Произошла ошибка при тесте: {e}")
+
+# --- Новая команда !логи ---
+@bot.command(name="логи")
+async def show_logs(ctx):
+    global start_time
+    if start_time is None:
+        await ctx.send("Ошибка: время запуска бота не зафиксировано.")
+        return
+
+    # Считаем разницу во времени
+    uptime = datetime.datetime.utcnow() - start_time
+    days = uptime.days
+    hours, remainder = divmod(uptime.seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    # Получаем информацию о следующем сообщении
+    next_msg, next_time = get_next_message_info()
+    ping = round(bot.latency * 1000)
+
+    # Формируем красивый отчет в чат
+    report = (
+        "📊 **СТАТИСТИКА И СТАТУС БОТА**\n"
+        f"⏱ **Время работы (Uptime):** `{days} дн. {hours} ч. {minutes} мин. {seconds} сек.`\n"
+        f"📶 **Текущий пинг:** `{ping} мс`\n"
+        f"📅 **Следующая отправка через:** `{next_time}`\n"
+        f"📝 **Текст следующего сообщения:** `{next_msg[:100]}`"
+    )
+    await ctx.send(report)
 
 # Запуск таймера при старте бота
 @bot.event
 async def on_ready():
+    global start_time
+    # Фиксируем точное время запуска, если оно ещё не задано
+    if start_time is None:
+        start_time = datetime.datetime.utcnow()
+        
     print(f"Бот {bot.user.name} успешно запущен и готов к работе!")
     if not check_schedule_and_send.is_running():
         check_schedule_and_send.start()
