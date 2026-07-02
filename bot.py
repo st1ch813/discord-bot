@@ -7,6 +7,12 @@ import discord
 from flask import Flask, jsonify, render_template_string
 import threading
 
+# ================= НАСТРОЙКА РОЛИ =================
+# Вставь сюда ID роли, которую нужно упоминать (только цифры внутри кавычек)
+# Если оставить пустые кавычки "", бот будет отправлять сообщения БЕЗ упоминания роли.
+ROLE_ID = "1522143408817311744"
+# ==================================================
+
 # Инициализация интентов и бота
 intents = discord.Intents.default()
 intents.message_content = True
@@ -98,7 +104,13 @@ async def check_schedule_and_send():
         channel_id = int(os.environ.get('DISCORD_CHANNEL_ID'))
         channel = bot.get_channel(channel_id)
         if channel:
-            await channel.send(text_to_send)
+            # Формируем текст с упоминанием роли, если ID указан
+            if ROLE_ID and ROLE_ID.isdigit():
+                final_text = f"<@&{ROLE_ID}>\n{text_to_send}"
+            else:
+                final_text = text_to_send
+                
+            await channel.send(final_text)
             print(f"Успешно отправлено сообщение для времени {current_time}")
 
 # Тестовая команда для проверки связи с Google Таблицей
