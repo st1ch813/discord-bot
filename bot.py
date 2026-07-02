@@ -57,10 +57,10 @@ def get_text_by_time(target_time):
         print(f"Ошибка при обращении к таблице: {e}")
     return None
 
-# Функция для поиска следующего запланированного сообщения
+# Функция для поиска следующего запланированного сообщения и срока его контракта
 def get_next_message_info():
     if not is_bot_enabled:
-        return "Рассылка на паузе", "--"
+        return "Рассылка на паузе", "--", ""
 
     sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
@@ -70,6 +70,7 @@ def get_next_message_info():
     
     next_text = "Нет запланированных сообщений"
     time_left_str = "--"
+    contract_expiry = ""
     min_diff = 9999
     
     try:
@@ -100,6 +101,11 @@ def get_next_message_info():
                         if diff < min_diff:
                             min_diff = diff
                             next_text = row[1].strip()
+                            # Читаем колонку C (индекс 2), если она существует и это не заголовок
+                            if len(row) >= 3 and "срок годности" not in row[2].lower():
+                                contract_expiry = row[2].strip()
+                            else:
+                                contract_expiry = ""
             
             if min_diff != 9999:
                 if min_diff >= 60:
@@ -109,7 +115,7 @@ def get_next_message_info():
     except Exception as e:
         next_text = f"Ошибка проверки: {e}"
         
-    return next_text, time_left_str
+    return next_text, time_left_str, contract_expiry
 
 # Фоновый цикл, который проверяет время каждую минуту
 @tasks.loop(minutes=1)
@@ -136,14 +142,14 @@ async def check_schedule_and_send():
 @bot.command(name="пауза")
 async def toggle_bot(ctx):
     global is_bot_enabled
-    is_bot_enabled = not is_bot_enabled # Меняем статус на противоположный
+    is_bot_enabled = not is_bot_enabled
     
     if is_bot_enabled:
         await ctx.send("Бот не на паузе (работает)")
     else:
         await ctx.send("Бот на паузе")
 
-# Тестовая команда для проверки связи с Google Таблицей
+# Тестовая команда для проверки связи с Google Таблицей (теперь показывает Колонку C)
 @bot.command(name="тест")
 async def test_sheet(ctx):
     sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
@@ -165,8 +171,14 @@ async def test_sheet(ctx):
                         continue
                     
                     has_rows = True
-                    display_text = text_part[:50] if text_part else "[Пусто]"
-                    data_preview += f"Времена: `{time_part}` | Текст: `{display_text}...`\n"
+                    display_text = text_part[:40] if text_part else "[Пусто]"
+                    
+                    # Проверяем колонку C
+                    expiry_part = ""
+                    if len(row) >= 3 and row[2].strip() and "срок годности" not in row[2].lower():
+                        expiry_part = f" | Срок: `{row[2].strip()}`"
+                        
+                    data_preview += f"Времена: `{time_part}` | Текст: `{display_text}...`{expiry_part}\n"
             
             if has_rows:
                 await ctx.send(data_preview)
@@ -190,10 +202,11 @@ async def show_logs(ctx):
     hours, remainder = divmod(uptime.seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
 
-    next_msg, next_time = get_next_message_info()
+    next_msg, next_time, expiry = get_next_message_info()
     ping = round(bot.latency * 1000)
 
     status_str = "🟢 РАБОТАЕТ" if is_bot_enabled else "🟡 НА ПАУЗЕ"
+    expiry_str = f"\n⏳ **Срок годности контракта:** `{expiry}`" if expiry else ""
 
     report = (
         "📊 **СТАТИСТИКА И СТАТУС БОТА**\n"
@@ -202,6 +215,7 @@ async def show_logs(ctx):
         f"📶 **Текущий пинг:** `{ping} мс`\n"
         f"📅 **Следующая отправка через:** `{next_time}`\n"
         f"📝 **Текст следующего сообщения:** `{next_msg[:100]}`"
+        f"{expiry_str}"
     )
     await ctx.send(report)
 
@@ -250,6 +264,7 @@ HTML_PAGE = """
             <div class="next-title">СЛЕДУЮЩЕЕ СООБЩЕНИЕ:</div>
             <div id="next_text" style="font-weight: bold; word-break: break-all; color: #f5c2e7;">Загрузка...</div>
             <div style="margin-top: 5px; font-size: 14px;">Отправка через: <span id="next_time" style="color: #a6e3a1; font-weight: bold;">--</span></div>
+            <div style="margin-top: 5px; font-size: 14px;">Срок контракта: <span id="contract_expiry" style="color: #f9e2af;">--</span></div>
         </div>
     </div>
 
@@ -272,6 +287,7 @@ HTML_PAGE = """
                 document.getElementById('loop').innerText = data.loop_status;
                 document.getElementById('next_text').innerText = data.next_msg;
                 document.getElementById('next_time').innerText = data.next_time_left;
+                document.getElementById('contract_expiry').innerText = data.contract_expiry || "Не указан";
             } catch(e) {
                 let statusElem = document.getElementById('status');
                 statusElem.innerText = "ОТКЛЮЧЕН";
@@ -309,7 +325,7 @@ def get_stats():
     else:
         status_text = "РАБОТАЕТ 24/7"
 
-    next_msg, next_time_left = get_next_message_info()
+    next_msg, next_time_left, contract_expiry = get_next_message_info()
 
     return jsonify({
         "status": status_text,
@@ -318,7 +334,8 @@ def get_stats():
         "ping": round(bot.latency * 1000) if is_ready else 0,
         "loop_status": "Активен" if (loop_active and is_bot_enabled) else "На паузе",
         "next_msg": next_msg,
-        "next_time_left": next_time_left
+        "next_time_left": next_time_left,
+        "contract_expiry": contract_expiry
     })
 
 def run(): 
