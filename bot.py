@@ -114,7 +114,6 @@ def get_next_message_info():
 # Фоновый цикл, который проверяет время каждую минуту
 @tasks.loop(minutes=1)
 async def check_schedule_and_send():
-    # Если бот выключен через команду !отключить, пропускаем отправку
     if not is_bot_enabled:
         return
 
@@ -133,18 +132,16 @@ async def check_schedule_and_send():
             await channel.send(final_text)
             print(f"Успешно отправлено сообщение для времени {current_time}")
 
-# --- Новые команды управления статусом ---
-@bot.command(name="включить")
-async def enable_bot(ctx):
+# --- Измененная команда !пауза с новым текстом ---
+@bot.command(name="пауза")
+async def toggle_bot(ctx):
     global is_bot_enabled
-    is_bot_enabled = True
-    await ctx.send("✅ **Рассылка успешно включена!** Бот снова отправляет сообщения по расписанию.")
-
-@bot.command(name="отключить")
-async def disable_bot(ctx):
-    global is_bot_enabled
-    is_bot_enabled = False
-    await ctx.send("⏸ **Рассылка поставлена на паузу!** Сообщения временно отправляться не будут.")
+    is_bot_enabled = not is_bot_enabled # Переключаем статус
+    
+    if is_bot_enabled:
+        await ctx.send("Бот не на паузе (работает)")
+    else:
+        await ctx.send("Бот на паузе")
 
 # Тестовая команда для проверки связи с Google Таблицей
 @bot.command(name="тест")
