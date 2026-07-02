@@ -7,7 +7,7 @@ import threading
 import time
 
 # ================= НАСТРОЙКА РОЛИ =================
-ROLE_ID = "1447219553259094219"
+ROLE_ID = "СЮДА_ВСТАВЬ_ID_РОЛИ"
 # ==================================================
 
 # Глобальные переменные статуса
@@ -77,6 +77,65 @@ def get_all_contracts_from_sheet():
         print(f"Ошибка получения контрактов: {e}")
     return contracts
 
+# Функция для расчета следующего контракта и времени до него
+def get_next_message_info():
+    if not is_bot_enabled:
+        return "Рассылка на паузе", "--", ""
+
+    sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    
+    now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
+    current_minutes = now.hour * 60 + now.minute
+    
+    next_text = "Нет запланированных сообщений"
+    time_left_str = "--"
+    contract_expiry = ""
+    min_diff = 9999
+    
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            response.encoding = 'utf-8'
+            lines = response.text.splitlines()
+            reader = csv.reader(lines)
+            
+            for row in reader:
+                if len(row) >= 2:
+                    time_part = row[0].strip()
+                    if not time_part or ":" not in time_part:
+                        continue
+                    times_list = time_part.split()
+                    for single_time in times_list:
+                        sheet_time = parse_time(single_time)
+                        if not sheet_time:
+                            continue
+                        
+                        t_hours, t_mins = map(int, sheet_time.split(':'))
+                        sheet_minutes = t_hours * 60 + t_mins
+                        
+                        diff = sheet_minutes - current_minutes
+                        if diff <= 0:
+                            diff += 1440
+                            
+                        if diff < min_diff:
+                            min_diff = diff
+                            next_text = row[1].strip()
+                            if len(row) >= 3 and "срок годности" not in row[2].lower():
+                                contract_expiry = row[2].strip()
+                            else:
+                                contract_expiry = ""
+            
+            if min_diff != 9999:
+                if min_diff >= 60:
+                    time_left_str = f"{min_diff // 60} ч. {min_diff % 60} мин."
+                else:
+                    time_left_str = f"{min_diff} мин."
+    except Exception as e:
+        next_text = f"Ошибка проверки: {e}"
+        
+    return next_text, time_left_str, contract_expiry
+
 def send_to_webhook(text):
     webhook_url = os.environ.get('DISCORD_WEBHOOK_URL')
     if not webhook_url:
@@ -98,7 +157,7 @@ def send_to_webhook(text):
     except Exception as e:
         print(f"Не удалось отправить вебхук: {e}")
 
-# Фоновый цикл проверки времени (работает без привязки к дискорд-клиенту)
+# Фоновый цикл проверки времени (работает раз в минуту)
 def cron_loop():
     print("Фоновый таймер вебхука запущен.")
     while True:
@@ -108,7 +167,7 @@ def cron_loop():
             text_to_send = get_text_by_time(current_time)
             if text_to_send:
                 send_to_webhook(text_to_send)
-        time.sleep(60) # Проверяем раз в минуту
+        time.sleep(60)
 
 # --- Flask Веб-сервер ---
 app = Flask('')
@@ -129,7 +188,9 @@ HTML_PAGE = """
         .status-on { color: #04d361; font-weight: bold; }
         .status-off { color: #f75a68; font-weight: bold; }
         
-        /* Кнопка переключения паузы */
+        .next-box { background: #181825; padding: 12px; border-radius: 6px; margin-top: 15px; margin-bottom: 15px; border-left: 4px solid #89b4fa; }
+        .next-title { font-size: 14px; color: #a6adc8; margin-bottom: 5px; }
+
         .btn { background: #8257e5; color: white; border: none; padding: 10px 20px; border-radius: 5px; font-weight: bold; cursor: pointer; font-size: 16px; margin-top: 10px; transition: 0.2s; }
         .btn:hover { background: #9466ff; }
         .btn-pause { background: #f75a68; }
@@ -151,6 +212,13 @@ HTML_PAGE = """
         <form action="/toggle" method="POST">
             <button type="submit" id="action_btn" class="btn">Загрузка...</button>
         </form>
+
+        <div class="next-box">
+            <div class="next-title">СЛЕДУЮЩИЙ КОНТРАКТ:</div>
+            <div id="next_text" style="font-weight: bold; color: #f5c2e7;">Загрузка...</div>
+            <div style="margin-top: 5px; font-size: 14px;">Отправка через: <span id="next_time" style="color: #a6e3a1; font-weight: bold;">--</span></div>
+            <div style="margin-top: 5px; font-size: 14px;">Срок контракта: <span id="contract_expiry" style="color: #f9e2af;">--</span></div>
+        </div>
 
         <h2>📋 Все активные контракты</h2>
         <table>
@@ -188,6 +256,12 @@ HTML_PAGE = """
                     btn.className = "btn";
                 }
 
+                // Инфо о следующем сообщении
+                document.getElementById('next_text').innerText = data.next_msg;
+                document.getElementById('next_time').innerText = data.next_time_left;
+                document.getElementById('contract_expiry').innerText = data.contract_expiry || "Не указан";
+
+                // Обновление таблицы
                 let tableBody = document.getElementById('contracts_table_body');
                 tableBody.innerHTML = "";
                 if (data.all_contracts && data.all_contracts.length > 0) {
@@ -228,13 +302,15 @@ def toggle_status():
 
 @app.route('/api/stats')
 def get_stats():
+    next_msg, next_time_left, contract_expiry = get_next_message_info()
     return jsonify({
         "is_enabled": is_bot_enabled,
+        "next_msg": next_msg,
+        "next_time_left": next_time_left,
+        "contract_expiry": contract_expiry,
         "all_contracts": get_all_contracts_from_sheet()
     })
 
 if __name__ == '__main__':
-    # Запуск фонового потока отправки
     threading.Thread(target=cron_loop, daemon=True).start()
-    # Запуск веб-сайта
     app.run(host='0.0.0.0', port=10000)
