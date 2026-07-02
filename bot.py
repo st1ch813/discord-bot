@@ -55,6 +55,28 @@ async def check_schedule_and_send():
 
 # Запуск таймера при старте бота
 @bot.event
+@bot.command(name="тест")
+async def test_sheet(ctx):
+    sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            lines = response.text.splitlines()
+            reader = csv.reader(lines)
+            
+            data_preview = "Содержимое таблицы, которое видит бот:\n"
+            for row in reader:
+                if len(row) >= 2:
+                    data_preview += f"Время: `{row[0]}` | Текст: `{row[1]}`\n"
+            
+            await ctx.send(data_preview if len(data_preview) > 40 else "Таблица пустая или нечитаемая!")
+        else:
+            await ctx.send(f"Ошибка подключения к таблице! Статус: {response.status_code}")
+    except Exception as e:
+        await ctx.send(f"Произошла ошибка при тесте: {e}")
+        
 async def on_ready():
     print(f"Бот {bot.user.name} успешно запущен и готов к работе!")
     if not check_schedule_and_send.is_running():
