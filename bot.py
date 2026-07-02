@@ -18,7 +18,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Глобальные переменные статуса
 start_time = None
-is_bot_enabled = True # Флаг: включена ли рассылка сообщений
+is_bot_enabled = True  # Флаг: включена ли рассылка сообщений
 
 # Вспомогательная функция для парсинга времени из таблицы (в формат "HH:MM")
 def parse_time(time_str):
@@ -132,11 +132,11 @@ async def check_schedule_and_send():
             await channel.send(final_text)
             print(f"Успешно отправлено сообщение для времени {current_time}")
 
-# --- Измененная команда !пауза с новым текстом ---
+# --- Команда !пауза ---
 @bot.command(name="пауза")
 async def toggle_bot(ctx):
     global is_bot_enabled
-    is_bot_enabled = not is_bot_enabled # Переключаем статус
+    is_bot_enabled = not is_bot_enabled # Меняем статус на противоположный
     
     if is_bot_enabled:
         await ctx.send("Бот не на паузе (работает)")
