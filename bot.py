@@ -23,7 +23,7 @@ start_time = None
 def parse_time(time_str):
     try:
         time_str = time_str.strip()
-        if not time_str:
+        if not time_str or ":" not in time_str:
             return None
         if len(time_str.split(':')[0]) == 1:
             time_str = "0" + time_str
@@ -44,7 +44,7 @@ def get_text_by_time(target_time):
             for row in reader:
                 if len(row) >= 2:
                     time_part = row[0].strip()
-                    if not time_part: # Пропускаем абсолютно пустые строки
+                    if not time_part or ":" not in time_part: 
                         continue
                     times_list = time_part.split()
                     for single_time in times_list:
@@ -78,7 +78,7 @@ def get_next_message_info():
             for row in reader:
                 if len(row) >= 2:
                     time_part = row[0].strip()
-                    if not time_part:
+                    if not time_part or ":" not in time_part:
                         continue
                     times_list = time_part.split()
                     for single_time in times_list:
@@ -142,19 +142,20 @@ async def test_sheet(ctx):
                 if len(row) >= 2:
                     time_part = row[0].strip()
                     text_part = row[1].strip()
-                    # Если строка полностью пустая — игнорируем её и не выводим в !тест
-                    if not time_part and not text_part:
+                    
+                    # Жесткий фильтр: если в колонке времени нет символа ":", 
+                    # значит это пустая строка или мусор. Полностью пропускаем её.
+                    if ":" not in time_part:
                         continue
                     
                     has_rows = True
-                    display_time = time_part if time_part else "[Пусто]"
                     display_text = text_part[:50] if text_part else "[Пусто]"
-                    data_preview += f"Времена: `{display_time}` | Текст: `{display_text}...`\n"
+                    data_preview += f"Времена: `{time_part}` | Текст: `{display_text}...`\n"
             
             if has_rows:
                 await ctx.send(data_preview)
             else:
-                await ctx.send("Таблица пустая или нечитаемая!")
+                await ctx.send("Таблица пустая или не содержит корректного времени!")
         else:
             await ctx.send(f"Ошибка подключения к таблице! Status: {response.status_code}")
     except Exception as e:
