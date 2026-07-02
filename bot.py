@@ -12,11 +12,10 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Вспомогательная функция для парсинга времени из таблицы (в формат "HH:MМ")
+# Вспомогательная функция для парсинга времени из таблицы (в формат "HH:MM")
 def parse_time(time_str):
     try:
         time_str = time_str.strip()
-        # Если время записано как "H:MM", добавим ведущий ноль
         if len(time_str.split(':')[0]) == 1:
             time_str = "0" + time_str
         return time_str[:5]
@@ -48,13 +47,12 @@ def get_next_message_info():
     sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
     
-    # Текущее время сервера (КВ/МСК)
     now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
     current_minutes = now.hour * 60 + now.minute
     
     next_text = "Нет запланированных сообщений"
     time_left_str = "--"
-    min_diff = 9999  # Ищем минимальную разницу во времени
+    min_diff = 9999
     
     try:
         response = requests.get(url)
@@ -72,10 +70,9 @@ def get_next_message_info():
                     t_hours, t_mins = map(int, sheet_time.split(':'))
                     sheet_minutes = t_hours * 60 + t_mins
                     
-                    # Разница в минутах между текущим моментом и временем в таблице
                     diff = sheet_minutes - current_minutes
                     if diff <= 0:
-                        diff += 1440  # Если время уже прошло, значит это будет завтра (+24 часа)
+                        diff += 1440
                         
                     if diff < min_diff:
                         min_diff = diff
@@ -222,7 +219,7 @@ HTML_PAGE = """
             document.getElementById('time').innerText = targetTime.toTimeString().split(' ')[0];
         }, 1000);
 
-        setInterval(updateStats, 4000); // Обновление параметров раз в 4 секунды
+        setInterval(updateStats, 4000);
         updateStats();
     </script>
 </body>
@@ -241,7 +238,7 @@ def get_stats():
     if not is_ready:
         status_text = "ЗАГРУЖАЕТСЯ"
     elif loop_active:
-        status_text = "РАБОТАЕТ"
+        status_text = "РАБОТАЕТ 24/7"
     else:
         status_text = "ПАУЗА (РАССЫЛКА ОТКЛЮЧЕНА)"
 
