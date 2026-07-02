@@ -16,8 +16,9 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Переменная для хранения точного времени запуска бота
+# Глобальные переменные статуса
 start_time = None
+is_bot_enabled = True # Флаг: включена ли рассылка сообщений
 
 # Вспомогательная функция для парсинга времени из таблицы (в формат "HH:MM")
 def parse_time(time_str):
@@ -58,6 +59,9 @@ def get_text_by_time(target_time):
 
 # Функция для поиска следующего запланированного сообщения
 def get_next_message_info():
+    if not is_bot_enabled:
+        return "Рассылка на паузе", "--"
+
     sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
     
@@ -110,6 +114,10 @@ def get_next_message_info():
 # Фоновый цикл, который проверяет время каждую минуту
 @tasks.loop(minutes=1)
 async def check_schedule_and_send():
+    # Если бот выключен через команду !отключить, пропускаем отправку
+    if not is_bot_enabled:
+        return
+
     now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
     current_time = now.strftime("%H:%M")
     text_to_send = get_text_by_time(current_time)
@@ -125,6 +133,19 @@ async def check_schedule_and_send():
             await channel.send(final_text)
             print(f"Успешно отправлено сообщение для времени {current_time}")
 
+# --- Новые команды управления статусом ---
+@bot.command(name="включить")
+async def enable_bot(ctx):
+    global is_bot_enabled
+    is_bot_enabled = True
+    await ctx.send("✅ **Рассылка успешно включена!** Бот снова отправляет сообщения по расписанию.")
+
+@bot.command(name="отключить")
+async def disable_bot(ctx):
+    global is_bot_enabled
+    is_bot_enabled = False
+    await ctx.send("⏸ **Рассылка поставлена на паузу!** Сообщения временно отправляться не будут.")
+
 # Тестовая команда для проверки связи с Google Таблицей
 @bot.command(name="тест")
 async def test_sheet(ctx):
@@ -136,15 +157,13 @@ async def test_sheet(ctx):
             response.encoding = 'utf-8'
             lines = response.text.splitlines()
             reader = csv.reader(lines)
-            data_preview = "Содержимое таблицы, которое видит бот:\n"
+            data_preview = f"Содержимое таблицы, которое видит бот (Рассылка: {'ВКЛ' if is_bot_enabled else 'ПАУЗА'}):\n"
             has_rows = False
             for row in reader:
                 if len(row) >= 2:
                     time_part = row[0].strip()
                     text_part = row[1].strip()
                     
-                    # Жесткий фильтр: если в колонке времени нет символа ":", 
-                    # значит это пустая строка или мусор. Полностью пропускаем её.
                     if ":" not in time_part:
                         continue
                     
@@ -177,8 +196,11 @@ async def show_logs(ctx):
     next_msg, next_time = get_next_message_info()
     ping = round(bot.latency * 1000)
 
+    status_str = "🟢 РАБОТАЕТ" if is_bot_enabled else "🟡 НА ПАУЗЕ"
+
     report = (
         "📊 **СТАТИСТИКА И СТАТУС БОТА**\n"
+        f"⚙️ **Режим рассылки:** `{status_str}`\n"
         f"⏱ **Время работы (Uptime):** `{days} дн. {hours} ч. {minutes} мин. {seconds} сек.`\n"
         f"📶 **Текущий пинг:** `{ping} мс`\n"
         f"📅 **Следующая отправка через:** `{next_time}`\n"
@@ -212,6 +234,8 @@ HTML_PAGE = """
         h1 { margin-top: 0; color: #04d361; font-size: 24px; }
         .param { margin: 12px 0; font-size: 16px; }
         .value { color: #8257e5; font-weight: bold; }
+        .status-on { color: #04d361; font-weight: bold; }
+        .status-off { color: #f75a68; font-weight: bold; }
         .next-box { background: #181825; padding: 12px; border-radius: 6px; margin-top: 15px; border-left: 4px solid #89b4fa; }
         .next-title { font-size: 14px; color: #a6adc8; margin-bottom: 5px; }
     </style>
@@ -219,7 +243,7 @@ HTML_PAGE = """
 <body>
     <div class="container">
         <h1>Панель управления Ботом</h1>
-        <div class="param">Статус: <span id="status" class="value">Загрузка...</span></div>
+        <div class="param">Статус рассылки: <span id="status">Загрузка...</span></div>
         <div class="param">Имя бота: <span id="bot_name" class="value">...</span></div>
         <div class="param">Пинг Дискорда: <span id="ping" class="value">0</span> мс</div>
         <div class="param">Время сервера (КВ/МСК): <span id="time" class="value">00:00:00</span></div>
@@ -237,14 +261,24 @@ HTML_PAGE = """
             try {
                 let res = await fetch('/api/stats');
                 let data = await res.json();
-                document.getElementById('status').innerText = data.status;
+                
+                let statusElem = document.getElementById('status');
+                statusElem.innerText = data.status;
+                if (data.is_enabled) {
+                    statusElem.className = "status-on";
+                } else {
+                    statusElem.className = "status-off";
+                }
+
                 document.getElementById('bot_name').innerText = data.bot_name;
                 document.getElementById('ping').innerText = data.ping;
                 document.getElementById('loop').innerText = data.loop_status;
                 document.getElementById('next_text').innerText = data.next_msg;
                 document.getElementById('next_time').innerText = data.next_time_left;
             } catch(e) {
-                document.getElementById('status').innerText = "ОТКЛЮЧЕН";
+                let statusElem = document.getElementById('status');
+                statusElem.innerText = "ОТКЛЮЧЕН";
+                statusElem.className = "status-off";
             }
         }
 
@@ -273,6 +307,8 @@ def get_stats():
     
     if not is_ready:
         status_text = "ЗАГРУЖАЕТСЯ"
+    elif not is_bot_enabled:
+        status_text = "ПАУЗА (ОТКЛЮЧЕНА)"
     else:
         status_text = "РАБОТАЕТ 24/7"
 
@@ -280,9 +316,10 @@ def get_stats():
 
     return jsonify({
         "status": status_text,
+        "is_enabled": is_bot_enabled,
         "bot_name": bot.user.name if is_ready else "Неизвестно",
         "ping": round(bot.latency * 1000) if is_ready else 0,
-        "loop_status": "Активен" if loop_active else "Остановлен",
+        "loop_status": "Активен" if (loop_active and is_bot_enabled) else "На паузе",
         "next_msg": next_msg,
         "next_time_left": next_time_left
     })
