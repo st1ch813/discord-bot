@@ -8,8 +8,7 @@ from flask import Flask, jsonify, render_template_string
 import threading
 
 # ================= НАСТРОЙКА РОЛИ =================
-# Вставь сюда ID роли, которую нужно упоминать (только цифры внутри кавычек)
-ROLE_ID = "1522143408817311744"
+ROLE_ID = "СЮДА_ВСТАВЬ_ID_РОЛИ"
 # ==================================================
 
 # Инициализация интентов и бота
@@ -44,8 +43,10 @@ def get_text_by_time(target_time):
             reader = csv.reader(lines)
             for row in reader:
                 if len(row) >= 2:
-                    # Разделяем строку с временами по пробелам
-                    times_list = row[0].strip().split()
+                    time_part = row[0].strip()
+                    if not time_part: # Пропускаем абсолютно пустые строки
+                        continue
+                    times_list = time_part.split()
                     for single_time in times_list:
                         sheet_time = parse_time(single_time)
                         sheet_text = row[1].strip()
@@ -76,8 +77,10 @@ def get_next_message_info():
             
             for row in reader:
                 if len(row) >= 2:
-                    # Разделяем строку с временами по пробелам
-                    times_list = row[0].strip().split()
+                    time_part = row[0].strip()
+                    if not time_part:
+                        continue
+                    times_list = time_part.split()
                     for single_time in times_list:
                         sheet_time = parse_time(single_time)
                         if not sheet_time:
@@ -134,10 +137,24 @@ async def test_sheet(ctx):
             lines = response.text.splitlines()
             reader = csv.reader(lines)
             data_preview = "Содержимое таблицы, которое видит бот:\n"
+            has_rows = False
             for row in reader:
                 if len(row) >= 2:
-                    data_preview += f"Времена: `{row[0]}` | Текст: `{row[1][:50]}...`\n"
-            await ctx.send(data_preview if len(data_preview) > 40 else "Таблица пустая или нечитаемая!")
+                    time_part = row[0].strip()
+                    text_part = row[1].strip()
+                    # Если строка полностью пустая — игнорируем её и не выводим в !тест
+                    if not time_part and not text_part:
+                        continue
+                    
+                    has_rows = True
+                    display_time = time_part if time_part else "[Пусто]"
+                    display_text = text_part[:50] if text_part else "[Пусто]"
+                    data_preview += f"Времена: `{display_time}` | Текст: `{display_text}...`\n"
+            
+            if has_rows:
+                await ctx.send(data_preview)
+            else:
+                await ctx.send("Таблица пустая или нечитаемая!")
         else:
             await ctx.send(f"Ошибка подключения к таблице! Status: {response.status_code}")
     except Exception as e:
