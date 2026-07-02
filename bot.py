@@ -8,6 +8,7 @@ from flask import Flask, jsonify, render_template_string
 import threading
 
 # ================= НАСТРОЙКА РОЛИ =================
+# Вставь сюда ID роли, которую нужно упоминать (только цифры внутри кавычек)
 ROLE_ID = "1522143408817311744"
 # ==================================================
 
@@ -23,6 +24,8 @@ start_time = None
 def parse_time(time_str):
     try:
         time_str = time_str.strip()
+        if not time_str:
+            return None
         if len(time_str.split(':')[0]) == 1:
             time_str = "0" + time_str
         return time_str[:5]
@@ -41,10 +44,13 @@ def get_text_by_time(target_time):
             reader = csv.reader(lines)
             for row in reader:
                 if len(row) >= 2:
-                    sheet_time = parse_time(row[0])
-                    sheet_text = row[1].strip()
-                    if sheet_time == target_time:
-                        return sheet_text
+                    # Разделяем строку с временами по пробелам
+                    times_list = row[0].strip().split()
+                    for single_time in times_list:
+                        sheet_time = parse_time(single_time)
+                        sheet_text = row[1].strip()
+                        if sheet_time == target_time:
+                            return sheet_text
     except Exception as e:
         print(f"Ошибка при обращении к таблице: {e}")
     return None
@@ -70,20 +76,23 @@ def get_next_message_info():
             
             for row in reader:
                 if len(row) >= 2:
-                    sheet_time = parse_time(row[0])
-                    if not sheet_time:
-                        continue
-                    
-                    t_hours, t_mins = map(int, sheet_time.split(':'))
-                    sheet_minutes = t_hours * 60 + t_mins
-                    
-                    diff = sheet_minutes - current_minutes
-                    if diff <= 0:
-                        diff += 1440
+                    # Разделяем строку с временами по пробелам
+                    times_list = row[0].strip().split()
+                    for single_time in times_list:
+                        sheet_time = parse_time(single_time)
+                        if not sheet_time:
+                            continue
                         
-                    if diff < min_diff:
-                        min_diff = diff
-                        next_text = row[1].strip()
+                        t_hours, t_mins = map(int, sheet_time.split(':'))
+                        sheet_minutes = t_hours * 60 + t_mins
+                        
+                        diff = sheet_minutes - current_minutes
+                        if diff <= 0:
+                            diff += 1440
+                            
+                        if diff < min_diff:
+                            min_diff = diff
+                            next_text = row[1].strip()
             
             if min_diff != 9999:
                 if min_diff >= 60:
@@ -127,14 +136,14 @@ async def test_sheet(ctx):
             data_preview = "Содержимое таблицы, которое видит бот:\n"
             for row in reader:
                 if len(row) >= 2:
-                    data_preview += f"Время: `{row[0]}` | Текст: `{row[1]}`\n"
+                    data_preview += f"Времена: `{row[0]}` | Текст: `{row[1][:50]}...`\n"
             await ctx.send(data_preview if len(data_preview) > 40 else "Таблица пустая или нечитаемая!")
         else:
             await ctx.send(f"Ошибка подключения к таблице! Status: {response.status_code}")
     except Exception as e:
         await ctx.send(f"Произошла ошибка при тесте: {e}")
 
-# --- Новая команда !логи ---
+# Команда !логи
 @bot.command(name="логи")
 async def show_logs(ctx):
     global start_time
@@ -142,17 +151,14 @@ async def show_logs(ctx):
         await ctx.send("Ошибка: время запуска бота не зафиксировано.")
         return
 
-    # Считаем разницу во времени
     uptime = datetime.datetime.utcnow() - start_time
     days = uptime.days
     hours, remainder = divmod(uptime.seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
 
-    # Получаем информацию о следующем сообщении
     next_msg, next_time = get_next_message_info()
     ping = round(bot.latency * 1000)
 
-    # Формируем красивый отчет в чат
     report = (
         "📊 **СТАТИСТИКА И СТАТУС БОТА**\n"
         f"⏱ **Время работы (Uptime):** `{days} дн. {hours} ч. {minutes} мин. {seconds} сек.`\n"
@@ -166,7 +172,6 @@ async def show_logs(ctx):
 @bot.event
 async def on_ready():
     global start_time
-    # Фиксируем точное время запуска, если оно ещё не задано
     if start_time is None:
         start_time = datetime.datetime.utcnow()
         
