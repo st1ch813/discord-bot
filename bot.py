@@ -12,6 +12,17 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# Вспомогательная функция для парсинга времени из таблицы (в формат "HH:MМ")
+def parse_time(time_str):
+    try:
+        time_str = time_str.strip()
+        # Если время записано как "H:MM", добавим ведущий ноль
+        if len(time_str.split(':')[0]) == 1:
+            time_str = "0" + time_str
+        return time_str[:5]
+    except:
+        return None
+
 # Функция для чтения данных из Google Таблицы
 def get_text_by_time(target_time):
     sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
@@ -24,15 +35,61 @@ def get_text_by_time(target_time):
             reader = csv.reader(lines)
             for row in reader:
                 if len(row) >= 2:
-                    sheet_time = row[0].strip()
+                    sheet_time = parse_time(row[0])
                     sheet_text = row[1].strip()
                     if sheet_time == target_time:
                         return sheet_text
-        else:
-            print(f"Не удалось загрузить таблицу. Статус: {response.status_code}")
     except Exception as e:
         print(f"Ошибка при обращении к таблице: {e}")
     return None
+
+# Функция для поиска следующего запланированного сообщения
+def get_next_message_info():
+    sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    
+    # Текущее время сервера (КВ/МСК)
+    now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
+    current_minutes = now.hour * 60 + now.minute
+    
+    next_text = "Нет запланированных сообщений"
+    time_left_str = "--"
+    min_diff = 9999  # Ищем минимальную разницу во времени
+    
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            response.encoding = 'utf-8'
+            lines = response.text.splitlines()
+            reader = csv.reader(lines)
+            
+            for row in reader:
+                if len(row) >= 2:
+                    sheet_time = parse_time(row[0])
+                    if not sheet_time:
+                        continue
+                    
+                    t_hours, t_mins = map(int, sheet_time.split(':'))
+                    sheet_minutes = t_hours * 60 + t_mins
+                    
+                    # Разница в минутах между текущим моментом и временем в таблице
+                    diff = sheet_minutes - current_minutes
+                    if diff <= 0:
+                        diff += 1440  # Если время уже прошло, значит это будет завтра (+24 часа)
+                        
+                    if diff < min_diff:
+                        min_diff = diff
+                        next_text = row[1].strip()
+            
+            if min_diff != 9999:
+                if min_diff >= 60:
+                    time_left_str = f"{min_diff // 60} ч. {min_diff % 60} мин."
+                else:
+                    time_left_str = f"{min_diff} мин."
+    except Exception as e:
+        next_text = f"Ошибка проверки: {e}"
+        
+    return next_text, time_left_str
 
 # Фоновый цикл, который проверяет время каждую минуту
 @tasks.loop(minutes=1)
@@ -75,7 +132,7 @@ async def on_ready():
     if not check_schedule_and_send.is_running():
         check_schedule_and_send.start()
 
-# --- Flask-вебсервер с кнопкой управления ---
+# --- Flask-вебсервер ---
 app = Flask('')
 
 HTML_PAGE = """
@@ -86,10 +143,12 @@ HTML_PAGE = """
     <title>Мониторинг Бота</title>
     <style>
         body { font-family: sans-serif; background: #121214; color: #e1e1e6; padding: 40px; text-align: center; }
-        .container { background: #202024; padding: 25px; border-radius: 8px; display: inline-block; text-align: left; min-width: 320px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        .container { background: #202024; padding: 25px; border-radius: 8px; display: inline-block; text-align: left; min-width: 350px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
         h1 { margin-top: 0; color: #04d361; font-size: 24px; }
         .param { margin: 12px 0; font-size: 16px; }
         .value { color: #8257e5; font-weight: bold; }
+        .next-box { background: #181825; padding: 12px; border-radius: 6px; margin-top: 15px; border-left: 4px solid #89b4fa; }
+        .next-title { font-size: 14px; color: #a6adc8; margin-bottom: 5px; }
         .btn { 
             display: block; width: 100%; padding: 12px; margin-top: 20px; 
             border: none; border-radius: 6px; font-size: 16px; font-weight: bold; 
@@ -110,6 +169,12 @@ HTML_PAGE = """
         <div class="param">Время сервера (КВ/МСК): <span id="time" class="value">00:00:00</span></div>
         <div class="param">Таймер рассылки: <span id="loop" class="value">...</span></div>
         
+        <div class="next-box">
+            <div class="next-title">СЛЕДУЮЩЕЕ СООБЩЕНИЕ:</div>
+            <div id="next_text" style="font-weight: bold; word-break: break-all; color: #f5c2e7;">Загрузка...</div>
+            <div style="margin-top: 5px; font-size: 14px;">Отправка через: <span id="next_time" style="color: #a6e3a1; font-weight: bold;">--</span></div>
+        </div>
+
         <button id="toggle-btn" class="btn btn-stop" onclick="toggleBot()">Загрузка кнопки...</button>
     </div>
 
@@ -122,6 +187,8 @@ HTML_PAGE = """
                 document.getElementById('bot_name').innerText = data.bot_name;
                 document.getElementById('ping').innerText = data.ping;
                 document.getElementById('loop').innerText = data.loop_status;
+                document.getElementById('next_text').innerText = data.next_msg;
+                document.getElementById('next_time').innerText = data.next_time_left;
                 
                 let btn = document.getElementById('toggle-btn');
                 if (data.loop_active) {
@@ -140,8 +207,7 @@ HTML_PAGE = """
             let btn = document.getElementById('toggle-btn');
             btn.disabled = true;
             try {
-                let res = await fetch('/api/toggle', { method: 'POST' });
-                let data = await res.json();
+                await fetch('/api/toggle', { method: 'POST' });
                 await updateStats();
             } catch(e) {
                 alert("Не удалось изменить состояние бота");
@@ -156,7 +222,7 @@ HTML_PAGE = """
             document.getElementById('time').innerText = targetTime.toTimeString().split(' ')[0];
         }, 1000);
 
-        setInterval(updateStats, 3000);
+        setInterval(updateStats, 4000); // Обновление параметров раз в 4 секунды
         updateStats();
     </script>
 </body>
@@ -175,16 +241,20 @@ def get_stats():
     if not is_ready:
         status_text = "ЗАГРУЖАЕТСЯ"
     elif loop_active:
-        status_text = "РАБОТАЕТ 24/7"
+        status_text = "РАБОТАЕТ"
     else:
         status_text = "ПАУЗА (РАССЫЛКА ОТКЛЮЧЕНА)"
+
+    next_msg, next_time_left = get_next_message_info()
 
     return jsonify({
         "status": status_text,
         "bot_name": bot.user.name if is_ready else "Неизвестно",
         "ping": round(bot.latency * 1000) if is_ready else 0,
         "loop_status": "Активен" if loop_active else "Остановлен",
-        "loop_active": loop_active
+        "loop_active": loop_active,
+        "next_msg": next_msg,
+        "next_time_left": next_time_left
     })
 
 @app.route('/api/toggle', methods=['POST'])
