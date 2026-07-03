@@ -10,8 +10,10 @@ import warnings
 # Глушим лишние предупреждения о парсинге дат, чтобы не засорять логи на Render
 warnings.filterwarnings("ignore", category=UserWarning, module="datetime")
 
-# ================= НАСТРОЙКА РОЛИ =================
+# ================= НАСТРОЙКИ БОТА =================
 ROLE_ID = "1447219553259094219"
+# Прямо вставляем твой ID таблицы сюда:
+SHEET_ID = "1B8Ts_DHQ11878tw1Qa8mUdjxFdCb249v78R10n9czBw"
 # ==================================================
 
 WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')
@@ -41,11 +43,9 @@ def check_is_last_day(expiry_str):
     if "срок" in expiry_str.lower() or "годн" in expiry_str.lower(): 
         return False
     try:
-        # Текущее время сервера + 3 часа (Киев/МСК)
         now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
         current_date = now.date()
         
-        # Если в ячейке диапазон дат (например, 29.06 - 06.07), берем вторую дату (дату окончания)
         if "-" in expiry_str:
             parts = expiry_str.split("-")
             expiry_str = parts[1].strip()
@@ -53,7 +53,6 @@ def check_is_last_day(expiry_str):
         for fmt in ('%d.%m.%Y', '%Y-%m-%d', '%d.%m.%y', '%d/%m/%Y', '%d.%m'):
             try:
                 if fmt == '%d.%m':
-                    # Чтобы избежать предупреждений, явно указываем текущий год при парсинге
                     p_days, p_months = map(int, expiry_str.split('.'))
                     expiry_date = datetime.date(current_date.year, p_months, p_days)
                 else:
@@ -85,8 +84,7 @@ def format_webhook_message(text_part, expiry_str):
     return final_msg
 
 def get_text_by_time(target_time):
-    sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
-    url = f"[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){sheet_id}/export?format=csv"
+    url = f"[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){SHEET_ID}/export?format=csv"
     try:
         response = requests.get(url)
         if response.status_code == 200:
@@ -110,8 +108,7 @@ def get_text_by_time(target_time):
     return None
 
 def get_all_contracts_from_sheet():
-    sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
-    url = f"[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){sheet_id}/export?format=csv"
+    url = f"[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){SHEET_ID}/export?format=csv"
     contracts = []
     try:
         response = requests.get(url)
@@ -149,8 +146,7 @@ def get_next_message_info():
     if not is_bot_enabled:
         return "Рассылка на паузе", "--", "", False
 
-    sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
-    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
     now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
     current_minutes = now.hour * 60 + now.minute
@@ -382,3 +378,4 @@ def get_stats():
 if __name__ == '__main__':
     threading.Thread(target=cron_loop, daemon=True).start()
     app.run(host='0.0.0.0', port=10000)
+    
