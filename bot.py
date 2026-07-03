@@ -43,10 +43,9 @@ def check_is_last_day(expiry_str):
         now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
         current_date = now.date()
         
-        # Проверяем разные форматы, включая диапазоны вроде "29.06 - 06.07"
         if "-" in expiry_str:
             parts = expiry_str.split("-")
-            expiry_str = parts[1].strip()  # Берем дату окончания
+            expiry_str = parts[1].strip()
             
         for fmt in ('%d.%m.%Y', '%Y-%m-%d', '%d.%m.%y', '%d/%m/%Y', '%d.%m'):
             try:
@@ -62,8 +61,7 @@ def check_is_last_day(expiry_str):
     except Exception as e:
         print(f"Ошибка парсинга даты '{expiry_str}': {e}")
     return False
-
-def format_webhook_message(text_part, ad_type, expiry_str):
+    def format_webhook_message(text_part, ad_type, expiry_str):
     text_part = text_part.strip().replace("```", "").replace("`", "")
     ad_type = ad_type.lower().strip()
     if not text_part: 
@@ -240,7 +238,6 @@ def cron_loop():
             if formatted_text:
                 send_to_webhook(formatted_text)
         time.sleep(60)
-
 # --- Flask Веб-сервер ---
 app = Flask('')
 
