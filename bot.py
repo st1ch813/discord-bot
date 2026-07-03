@@ -19,9 +19,6 @@ is_bot_enabled = True  # Флаг паузы
 def parse_time(time_str):
     try:
         time_str = time_str.strip().lower()
-        if "время" in time_str:
-            time_str = time_str.replace("время", "").strip()
-            
         if not time_str or ":" not in time_str:
             return None
             
@@ -61,19 +58,13 @@ def check_is_last_day(expiry_str):
     except Exception as e:
         print(f"Ошибка парсинга даты '{expiry_str}': {e}")
     return False
-    def format_webhook_message(text_part, ad_type, expiry_str):
+
+def format_webhook_message(text_part, expiry_str):
     text_part = text_part.strip().replace("```", "").replace("`", "")
-    ad_type = ad_type.lower().strip()
     if not text_part: 
         return None
-
-    prefix = ""
-    if "красн" in ad_type:
-        prefix = "/adv "
-    elif "зелен" in ad_type:
-        prefix = "/wnews "
         
-    code_block = f"```\n{prefix}{text_part}\n```"
+    code_block = f"```\n{text_part}\n```"
     
     if ROLE_ID and ROLE_ID.isdigit():
         final_msg = f"<@&{ROLE_ID}>\n{code_block}"
@@ -105,8 +96,7 @@ def get_text_by_time(target_time):
                         if sheet_time == target_time:
                             text_part = row[1].strip()
                             expiry_part = row[2].strip() if len(row) >= 3 else ""
-                            type_part = row[3].strip() if len(row) >= 4 else ""
-                            return format_webhook_message(text_part, type_part, expiry_part)
+                            return format_webhook_message(text_part, expiry_part)
     except Exception as e:
         print(f"Ошибка при обращении к таблице: {e}")
     return None
@@ -136,16 +126,11 @@ def get_all_contracts_from_sheet():
                 expiry_part = row[2].strip() if len(row) >= 3 else ""
                 if "срок" in expiry_part.lower() or "годн" in expiry_part.lower():
                     expiry_part = ""
-                        
-                type_part = row[3].strip() if len(row) >= 4 else "обычное"
-                if "тип" in type_part.lower():
-                    type_part = "обычное"
 
                 contracts.append({
                     "time": time_part,
                     "text": clean_text,
                     "expiry": expiry_part if expiry_part else "Не указан",
-                    "type": type_part,
                     "is_last_day": check_is_last_day(expiry_part)
                 })
     except Exception as e:
@@ -154,7 +139,7 @@ def get_all_contracts_from_sheet():
 
 def get_next_message_info():
     if not is_bot_enabled:
-        return "Рассылка на паузе", "--", "", "Обычное", False
+        return "Рассылка на паузе", "--", "", False
 
     sheet_id = os.environ.get('GOOGLE_SHEETS_ID')
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
@@ -165,7 +150,6 @@ def get_next_message_info():
     next_text = "Нет запланированных сообщений"
     time_left_str = "--"
     contract_expiry = ""
-    ad_type_display = "Обычное"
     is_last = False
     min_diff = 9999
 
@@ -199,7 +183,6 @@ def get_next_message_info():
                                 min_diff = diff
                                 next_text = row[1].strip().replace("```", "").replace("`", "")
                                 contract_expiry = row[2].strip() if len(row) >= 3 and "срок" not in row[2].lower() else ""
-                                ad_type_display = row[3].strip() if len(row) >= 4 and "тип" not in row[3].lower() else "Обычное"
                                 is_last = check_is_last_day(contract_expiry)
                         except:
                             continue
@@ -212,7 +195,7 @@ def get_next_message_info():
     except Exception as e:
         next_text = f"Ошибка проверки: {e}"
 
-    return next_text, time_left_str, contract_expiry, ad_type_display, is_last
+    return next_text, time_left_str, contract_expiry, is_last
 
 def send_to_webhook(final_text):
     if not WEBHOOK_URL:
@@ -238,6 +221,7 @@ def cron_loop():
             if formatted_text:
                 send_to_webhook(formatted_text)
         time.sleep(60)
+
 # --- Flask Веб-сервер ---
 app = Flask('')
 
@@ -270,10 +254,6 @@ HTML_PAGE = """
        th { background-color: #29292e; color: #04d361; font-weight: bold; }
        .td-time { color: #a6e3a1; font-weight: bold; white-space: nowrap; }
        .td-expiry { color: #f9e2af; font-weight: bold; white-space: nowrap; }
-       .badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; text-transform: uppercase; }
-       .badge-red { background: #f75a68; color: #fff; }
-       .badge-green { background: #04d361; color: #121214; }
-       .badge-normal { background: #4f545c; color: #fff; }
        .alert-expiry { color: #f75a68; font-weight: bold; font-size: 11px; display: block; margin-top: 4px; background: rgba(247,90,104,0.1); padding: 2px 6px; border-radius: 4px; text-align: center; }
    </style>
 </head>
@@ -291,7 +271,6 @@ HTML_PAGE = """
            <div class="next-title">СЛЕДУЮЩИЙ КОНТРАКТ:</div>
            <div id="next_text" style="font-weight: bold; color: #f5c2e7;">Загрузка...</div>
            <div style="margin-top: 5px; font-size: 14px;">Отправка через: <span id="next_time" style="color: #a6e3a1; font-weight: bold;">--</span></div>
-           <div style="margin-top: 5px; font-size: 14px;">Тип объявления: <span id="next_type" class="value">--</span></div>
            <div style="margin-top: 5px; font-size: 14px;">Срок контракта: <span id="contract_expiry" style="color: #f9e2af;">--</span> <span id="next_alert" style="color: #f75a68; font-weight: bold;"></span></div>
        </div>
 
@@ -299,14 +278,13 @@ HTML_PAGE = """
        <table>
            <thead>
                <tr>
-                   <th style="width: 15%;">Время</th>
-                   <th style="width: 22%;">Тип объявления</th>
-                   <th style="width: 43%;">Текст контракта</th>
+                   <th style="width: 20%;">Время</th>
+                   <th style="width: 60%;">Текст контракта</th>
                    <th style="width: 20%;">Срок действия</th>
                </tr>
            </thead>
            <tbody id="contracts_table_body">
-               <tr><td colspan="4" style="text-align: center;">Загрузка списка...</td></tr>
+               <tr><td colspan="3" style="text-align: center;">Загрузка списка...</td></tr>
            </tbody>
        </table>
    </div>
@@ -335,11 +313,6 @@ HTML_PAGE = """
                document.getElementById('next_text').innerText = data.next_msg;
                document.getElementById('next_time').innerText = data.next_time_left;
                document.getElementById('contract_expiry').innerText = data.contract_expiry || "Не указан";
-               
-               let nType = data.next_type;
-               if(nType.includes("красн")) nType = "Красное (/adv)";
-               if(nType.includes("зелен")) nType = "Зеленое (/wnews)";
-               document.getElementById('next_type').innerText = nType;
                document.getElementById('next_alert').innerText = data.next_is_last ? "⚠️ ПОСЛЕДНИЙ ДЕНЬ!" : "";
 
                let tableBody = document.getElementById('contracts_table_body');
@@ -347,24 +320,17 @@ HTML_PAGE = """
                if (data.all_contracts && data.all_contracts.length > 0) {
                    data.all_contracts.forEach(c => {
                        let row = document.createElement('tr');
-                       let bClass = "badge-normal";
-                       let tText = "Обычное";
-                       
-                       if(c.type.includes("красн")) { bClass = "badge-red"; tText = "Красное (/adv)"; }
-                       if(c.type.includes("зелен")) { bClass = "badge-green"; tText = "Зеленое (/wnews)"; }
-                       
                        let warn = c.is_last_day ? '<span class="alert-expiry">⚠️ ПОСЛЕДНИЙ ДЕНЬ</span>' : '';
                        
                        row.innerHTML = `
                            <td class="td-time">${c.time}</td>
-                           <td><span class="badge ${bClass}">${tText}</span></td>
                            <td>${c.text}</td>
                            <td class="td-expiry">${c.expiry}${warn}</td>
                        `;
                        tableBody.appendChild(row);
                    });
                } else {
-                   tableBody.innerHTML = `<tr><td colspan="4" style="text-align: center;">Таблица пуста</td></tr>`;
+                   tableBody.innerHTML = `<tr><td colspan="3" style="text-align: center;">Таблица пуста</td></tr>`;
                }
            } catch(e) { }
        }
@@ -395,13 +361,12 @@ def toggle_status():
 
 @app.route('/api/stats')
 def get_stats():
-    next_msg, next_time_left, contract_expiry, next_type, next_is_last = get_next_message_info()
+    next_msg, next_time_left, contract_expiry, next_is_last = get_next_message_info()
     return jsonify({
         "is_enabled": is_bot_enabled,
         "next_msg": next_msg,
         "next_time_left": next_time_left,
         "contract_expiry": contract_expiry,
-        "next_type": next_type,
         "next_is_last": next_is_last,
         "all_contracts": get_all_contracts_from_sheet()
     })
