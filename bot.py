@@ -5,6 +5,10 @@ import csv
 from flask import Flask, jsonify, render_template_string, redirect, url_for
 import threading
 import time
+import warnings
+
+# Глушим лишние предупреждения о парсинге дат, чтобы не засорять логи на Render
+warnings.filterwarnings("ignore", category=UserWarning, module="datetime")
 
 # ================= НАСТРОЙКА РОЛИ =================
 ROLE_ID = "1447219553259094219"
@@ -37,23 +41,27 @@ def check_is_last_day(expiry_str):
     if "срок" in expiry_str.lower() or "годн" in expiry_str.lower(): 
         return False
     try:
+        # Текущее время сервера + 3 часа (Киев/МСК)
         now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
         current_date = now.date()
         
+        # Если в ячейке диапазон дат (например, 29.06 - 06.07), берем вторую дату (дату окончания)
         if "-" in expiry_str:
             parts = expiry_str.split("-")
             expiry_str = parts[1].strip()
             
         for fmt in ('%d.%m.%Y', '%Y-%m-%d', '%d.%m.%y', '%d/%m/%Y', '%d.%m'):
             try:
-                if len(expiry_str.split('.')) == 2 or len(expiry_str.split('/')) == 2:
-                    expiry_date = datetime.datetime.strptime(expiry_str, '%d.%m').date().replace(year=current_date.year)
+                if fmt == '%d.%m':
+                    # Чтобы избежать предупреждений, явно указываем текущий год при парсинге
+                    p_days, p_months = map(int, expiry_str.split('.'))
+                    expiry_date = datetime.date(current_date.year, p_months, p_days)
                 else:
                     expiry_date = datetime.datetime.strptime(expiry_str, fmt).date()
                     
                 if expiry_date == current_date: 
                     return True
-            except ValueError: 
+            except: 
                 continue
     except Exception as e:
         print(f"Ошибка парсинга даты '{expiry_str}': {e}")
