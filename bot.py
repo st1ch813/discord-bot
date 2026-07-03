@@ -7,7 +7,7 @@ import threading
 import time
 import warnings
 
-# Глушим лишние предупреждения о парсинге дат
+# Отключаем предупреждения о парсинге дат, чтобы логи на Render были чистыми
 warnings.filterwarnings("ignore", category=UserWarning, module="datetime")
 
 # ================= НАСТРОЙКИ БОТА =================
@@ -70,7 +70,7 @@ def format_webhook_message(text_part, expiry_str):
     if not text_part: 
         return None
         
-    # ТЕПЕРЬ ТЕКСТ ОТПРАВЛЯЕТСЯ КАК ЕСТЬ (БЕЗ АВТОМАТИЧЕСКИХ КОВЫЧЕК ```)
+    # Бот шлет текст ровно так, как он записан в таблице (со всеми кавычками, если они там есть)
     if ROLE_ID and ROLE_ID.isdigit():
         final_msg = f"<@&{ROLE_ID}>\n{text_part}"
     else:
@@ -124,13 +124,16 @@ def get_all_contracts_from_sheet():
                 if not time_part or not text_part:
                     continue
                 
+                # Для сайта убираем кавычки из превью, чтобы интерфейс выглядел аккуратно
+                clean_text = text_part.replace("```", "").replace("`", "")
+                
                 expiry_part = row[2].strip() if len(row) >= 3 else ""
                 if "срок" in expiry_part.lower() or "годн" in expiry_part.lower():
                     expiry_part = ""
 
                 contracts.append({
                     "time": time_part,
-                    "text": text_part,
+                    "text": clean_text,
                     "expiry": expiry_part if expiry_part else "Не указан",
                     "is_last_day": check_is_last_day(expiry_part)
                 })
@@ -142,7 +145,7 @@ def get_next_message_info():
     if not is_bot_enabled:
         return "Рассылка на паузе", "--", "", False
 
-    url = f"[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){SHEET_ID}/export?format=csv"
+    url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
     now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
     current_minutes = now.hour * 60 + now.minute
@@ -181,7 +184,7 @@ def get_next_message_info():
 
                             if diff < min_diff:
                                 min_diff = diff
-                                next_text = row[1].strip()
+                                next_text = row[1].strip().replace("```", "").replace("`", "")
                                 contract_expiry = row[2].strip() if len(row) >= 3 and "срок" not in row[2].lower() else ""
                                 is_last = check_is_last_day(contract_expiry)
                         except:
@@ -191,7 +194,7 @@ def get_next_message_info():
                 if min_diff >= 60:
                     time_left_str = f"{min_diff // 60} ч. {min_diff % 60} мин."
                 else:
-                    time_left_str = f"{min_diff} мин."
+                    time_left_str = f"{min_diff} min_diff."
     except Exception as e:
         next_text = f"Ошибка проверки: {e}"
 
@@ -354,5 +357,26 @@ def index():
     return render_template_string(HTML_PAGE)
 
 @app.route('/toggle', methods=['POST'])
-def toggle_status
-                    
+def toggle_status():
+    global is_bot_enabled
+    is_bot_enabled = not is_bot_enabled
+    return redirect(url_for('index'))
+
+@app.route('/api/stats')
+def get_stats():
+    next_msg, next_time_left, contract_expiry, next_is_last = get_next_message_info()
+    return jsonify({
+        "is_enabled": is_bot_enabled,
+        "next_msg": next_msg,
+        "next_time_left": next_time_left,
+        "contract_expiry": contract_expiry,
+        "next_is_last": next_is_last,
+        "all_contracts": get_all_contracts_from_sheet()
+    })
+
+if __name__ == '__main__':
+    threading.Thread(target=cron_loop, daemon=True).start()
+    app.run(host='0.0.0.0', port=10000)
+
+
+    
