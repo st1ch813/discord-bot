@@ -10,7 +10,6 @@ import time
 ROLE_ID = "1447219553259094219"
 # ==================================================
 
-# Все настройки подтягиваются напрямую из переменных окружения Render
 WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')
 
 # Глобальные переменные статуса
@@ -19,16 +18,21 @@ is_bot_enabled = True  # Флаг паузы
 
 def parse_time(time_str):
     try:
-        time_str = time_str.strip()
+        time_str = time_str.strip().lower()
+        if "время" in time_str:
+            time_str = time_str.replace("время", "").strip()
+            
         if not time_str or ":" not in time_str:
             return None
-        if len(time_str.split(':')[0]) == 1:
-            time_str = "0" + time_str
-        return time_str[:5]
+            
+        parts = time_str.split(':')
+        if len(parts[0]) == 1:
+            parts[0] = "0" + parts[0]
+            
+        return f"{parts[0][:2]}:{parts[1][:2]}"
     except:
         return None
 
-# Функция проверки: является ли сегодня ПОСЛЕДНИМ днем контракта
 def check_is_last_day(expiry_str):
     if not expiry_str or expiry_str.strip() == "": 
         return False
@@ -36,13 +40,21 @@ def check_is_last_day(expiry_str):
     if "срок" in expiry_str.lower() or "годн" in expiry_str.lower(): 
         return False
     try:
-        # Смещаем время сервера на Киев/МСК (+3 часа)
         now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
         current_date = now.date()
         
-        for fmt in ('%d.%m.%Y', '%Y-%m-%d', '%d.%m.%y', '%d/%m/%Y'):
+        # Проверяем разные форматы, включая диапазоны вроде "29.06 - 06.07"
+        if "-" in expiry_str:
+            parts = expiry_str.split("-")
+            expiry_str = parts[1].strip()  # Берем дату окончания
+            
+        for fmt in ('%d.%m.%Y', '%Y-%m-%d', '%d.%m.%y', '%d/%m/%Y', '%d.%m'):
             try:
-                expiry_date = datetime.datetime.strptime(expiry_str, fmt).date()
+                if len(expiry_str.split('.')) == 2 or len(expiry_str.split('/')) == 2:
+                    expiry_date = datetime.datetime.strptime(expiry_str, '%d.%m').date().replace(year=current_date.year)
+                else:
+                    expiry_date = datetime.datetime.strptime(expiry_str, fmt).date()
+                    
                 if expiry_date == current_date: 
                     return True
             except ValueError: 
@@ -51,30 +63,25 @@ def check_is_last_day(expiry_str):
         print(f"Ошибка парсинга даты '{expiry_str}': {e}")
     return False
 
-# Сборка и форматирование текста для отправки в Дискорд
 def format_webhook_message(text_part, ad_type, expiry_str):
     text_part = text_part.strip().replace("```", "").replace("`", "")
     ad_type = ad_type.lower().strip()
     if not text_part: 
         return None
 
-    # Подставляем команду по цвету
     prefix = ""
     if "красн" in ad_type:
         prefix = "/adv "
     elif "зелен" in ad_type:
         prefix = "/wnews "
         
-    # Заворачиваем в чистый блок кода
     code_block = f"```\n{prefix}{text_part}\n```"
     
-    # Добавляем пинг роли сверху
     if ROLE_ID and ROLE_ID.isdigit():
         final_msg = f"<@&{ROLE_ID}>\n{code_block}"
     else:
         final_msg = code_block
         
-    # Приписка про последний день контракта
     if check_is_last_day(expiry_str):
         final_msg += "\nсрок контракта истекает завтра"
         
@@ -92,7 +99,7 @@ def get_text_by_time(target_time):
             for row in reader:
                 if len(row) >= 2:
                     time_part = row[0].strip()
-                    if not time_part or ":" not in time_part or "время" in time_part.lower(): 
+                    if not time_part: 
                         continue
                     times_list = time_part.split()
                     for single_time in times_list:
@@ -117,27 +124,32 @@ def get_all_contracts_from_sheet():
             lines = response.text.splitlines()
             reader = csv.reader(lines)
             for row in reader:
-                if len(row) >= 2:
-                    time_part = row[0].strip()
-                    text_part = row[1].strip().replace("```", "").replace("`", "")
-                    if not time_part or ":" not in time_part or "время" in time_part.lower() or not text_part:
-                        continue
+                if len(row) < 2: 
+                    continue
                     
-                    expiry_part = row[2].strip() if len(row) >= 3 else ""
-                    if "срок" in expiry_part.lower() or "годн" in expiry_part.lower():
-                        expiry_part = ""
+                time_part = row[0].strip()
+                text_part = row[1].strip()
+                
+                if not time_part or not text_part:
+                    continue
+                
+                clean_text = text_part.replace("```", "").replace("`", "")
+                
+                expiry_part = row[2].strip() if len(row) >= 3 else ""
+                if "срок" in expiry_part.lower() or "годн" in expiry_part.lower():
+                    expiry_part = ""
                         
-                    type_part = row[3].strip() if len(row) >= 4 else "обычное"
-                    if "тип" in type_part.lower():
-                        type_part = "обычное"
+                type_part = row[3].strip() if len(row) >= 4 else "обычное"
+                if "тип" in type_part.lower():
+                    type_part = "обычное"
 
-                    contracts.append({
-                        "time": time_part,
-                        "text": text_part,
-                        "expiry": expiry_part if expiry_part else "Не указан",
-                        "type": type_part,
-                        "is_last_day": check_is_last_day(expiry_part)
-                    })
+                contracts.append({
+                    "time": time_part,
+                    "text": clean_text,
+                    "expiry": expiry_part if expiry_part else "Не указан",
+                    "type": type_part,
+                    "is_last_day": check_is_last_day(expiry_part)
+                })
     except Exception as e:
         print(f"Ошибка получения контрактов: {e}")
     return contracts
@@ -169,27 +181,30 @@ def get_next_message_info():
             for row in reader:
                 if len(row) >= 2:
                     time_part = row[0].strip()
-                    if not time_part or ":" not in time_part or "время" in time_part.lower():
+                    if not time_part:
                         continue
                     times_list = time_part.split()
                     for single_time in times_list:
                         sheet_time = parse_time(single_time)
-                        if not sheet_time:
+                        if not sheet_time or ":" not in sheet_time:
                             continue
 
-                        t_hours, t_mins = map(int, sheet_time.split(':'))
-                        sheet_minutes = t_hours * 60 + t_mins
+                        try:
+                            t_hours, t_mins = map(int, sheet_time.split(':'))
+                            sheet_minutes = t_hours * 60 + t_mins
 
-                        diff = sheet_minutes - current_minutes
-                        if diff <= 0:
-                            diff += 1440
+                            diff = sheet_minutes - current_minutes
+                            if diff <= 0:
+                                diff += 1440
 
-                        if diff < min_diff:
-                            min_diff = diff
-                            next_text = row[1].strip().replace("```", "").replace("`", "")
-                            contract_expiry = row[2].strip() if len(row) >= 3 and "срок" not in row[2].lower() else ""
-                            ad_type_display = row[3].strip() if len(row) >= 4 and "тип" not in row[3].lower() else "Обычное"
-                            is_last = check_is_last_day(contract_expiry)
+                            if diff < min_diff:
+                                min_diff = diff
+                                next_text = row[1].strip().replace("```", "").replace("`", "")
+                                contract_expiry = row[2].strip() if len(row) >= 3 and "срок" not in row[2].lower() else ""
+                                ad_type_display = row[3].strip() if len(row) >= 4 and "тип" not in row[3].lower() else "Обычное"
+                                is_last = check_is_last_day(contract_expiry)
+                        except:
+                            continue
 
             if min_diff != 9999:
                 if min_diff >= 60:
@@ -203,7 +218,7 @@ def get_next_message_info():
 
 def send_to_webhook(final_text):
     if not WEBHOOK_URL:
-        print("Ошибка: DISCORD_WEBHOOK_URL не настроен в Environment Variables!")
+        print("Ошибка: DISCORD_WEBHOOK_URL не настроен!")
         return
     payload = {"content": final_text}
     try:
@@ -215,7 +230,6 @@ def send_to_webhook(final_text):
     except Exception as e:
         print(f"Не удалось отправить вебхук: {e}")
 
-# Фоновый цикл проверки времени (работает раз в минуту)
 def cron_loop():
     print("Фоновый таймер вебхука запущен.")
     while True:
@@ -321,7 +335,6 @@ HTML_PAGE = """
                    btn.className = "btn";
                }
 
-               // Инфо о следующем сообщении
                document.getElementById('next_text').innerText = data.next_msg;
                document.getElementById('next_time').innerText = data.next_time_left;
                document.getElementById('contract_expiry').innerText = data.contract_expiry || "Не указан";
@@ -332,7 +345,6 @@ HTML_PAGE = """
                document.getElementById('next_type').innerText = nType;
                document.getElementById('next_alert').innerText = data.next_is_last ? "⚠️ ПОСЛЕДНИЙ ДЕНЬ!" : "";
 
-               // Обновление таблицы
                let tableBody = document.getElementById('contracts_table_body');
                tableBody.innerHTML = "";
                if (data.all_contracts && data.all_contracts.length > 0) {
