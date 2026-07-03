@@ -7,7 +7,7 @@ import threading
 import time
 import warnings
 
-# Отключаем предупреждения о парсинге дат, чтобы не засорять консоль Render
+# Отключаем предупреждения о парсинге дат, чтобы логи на Render были чистыми
 warnings.filterwarnings("ignore", category=UserWarning, module="datetime")
 
 # ================= НАСТРОЙКИ БОТА =================
@@ -27,25 +27,32 @@ SHEET_ROWS_CACHE = {
 }
 CACHE_TIMEOUT = 10  # Время жизни кэша в секундах
 
-# Безопасное скачивание таблицы с кэшированием (защита от лимитов Google)
+# Безопасное скачивание таблицы с кэшированием
 def fetch_sheet_rows():
     global SHEET_ROWS_CACHE
     now = time.time()
     # Если кэш пуст или прошло больше 10 секунд — обновляем данные
     if now - SHEET_ROWS_CACHE["last_fetched"] > CACHE_TIMEOUT or not SHEET_ROWS_CACHE["data"]:
-        url = f"[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){SHEET_ID}/export?format=csv"
+        url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
+        print(f"[LOG] Запрос свежих данных из Google Таблицы...")
         try:
             response = requests.get(url, timeout=5)
             if response.status_code == 200:
                 response.encoding = 'utf-8'
                 lines = response.text.splitlines()
                 reader = csv.reader(lines)
-                SHEET_ROWS_CACHE["data"] = list(reader)
+                parsed_rows = list(reader)
+                
+                # Убираем пустые строки на выходе
+                filtered_rows = [r for r in parsed_rows if len(r) >= 2 and r[0].strip()]
+                
+                SHEET_ROWS_CACHE["data"] = filtered_rows
                 SHEET_ROWS_CACHE["last_fetched"] = now
+                print(f"[LOG] Успешно загружено строк из таблицы: {len(filtered_rows)}")
             else:
-                print(f"Предупреждение: Google Sheets вернул код {response.status_code}. Используем кэш.")
+                print(f"[ERROR] Ошибка Google Sheets. Статус: {response.status_code}")
         except Exception as e:
-            print(f"Ошибка получения данных из Google Sheets: {e}")
+            print(f"[ERROR] Исключение при запросе к таблице: {e}")
     return SHEET_ROWS_CACHE["data"]
 
 def parse_time(time_str):
@@ -90,7 +97,7 @@ def check_is_last_day(expiry_str):
             except: 
                 continue
     except Exception as e:
-        print(f"Ошибка парсинга даты '{expiry_str}': {e}")
+        print(f"[ERROR] Ошибка парсинга даты '{expiry_str}': {e}")
     return False
 
 def format_webhook_message(text_part, expiry_str):
@@ -98,7 +105,6 @@ def format_webhook_message(text_part, expiry_str):
     if not text_part: 
         return None
         
-    # Текст отправляется абсолютно без изменений (со всеми кавычками из таблицы)
     if ROLE_ID and ROLE_ID.isdigit():
         final_msg = f"<@&{ROLE_ID}>\n{text_part}"
     else:
@@ -128,26 +134,38 @@ def get_text_by_time(target_time):
 def get_all_contracts_from_sheet():
     rows = fetch_sheet_rows()
     contracts = []
-    for row in rows:
-        if len(row) < 2: 
-            continue
+    print(f"[LOG] Обработка контрактов для вывода в таблицу на сайте. Всего строк: {len(rows)}")
+    for index, row in enumerate(rows):
+        try:
+            if len(row) < 2: 
+                continue
+                
+            time_part = row[0].strip()
+            text_part = row[1].strip()
             
-        time_part = row[0].strip()
-        text_part = row[1].strip()
-        
-        if not time_part or not text_part:
-            continue
-            
-        expiry_part = row[2].strip() if len(row) >= 3 else ""
-        if "срок" in expiry_part.lower() or "годн" in expiry_part.lower():
-            expiry_part = ""
+            if not time_part or not text_part:
+                continue
+                
+            # Пропускаем строку заголовков, если она затесалась
+            if "время" in time_part.lower() or "текст" in text_part.lower():
+                continue
+                
+            expiry_part = row[2].strip() if len(row) >= 3 else ""
+            if "срок" in expiry_part.lower() or "годн" in expiry_part.lower():
+                expiry_part = ""
 
-        contracts.append({
-            "time": time_part,
-            "text": text_part,
-            "expiry": expiry_part if expiry_part else "Не указан",
-            "is_last_day": check_is_last_day(expiry_part)
-        })
+            is_last = check_is_last_day(expiry_part)
+            
+            contracts.append({
+                "time": time_part,
+                "text": text_part,
+                "expiry": expiry_part if expiry_part else "Не указан",
+                "is_last_day": is_last
+            })
+        except Exception as e:
+            print(f"[ERROR] Ошибка обработки строки {index}: {e}")
+            
+    print(f"[LOG] Сформирован список активных контрактов для сайта: {len(contracts)} шт.")
     return contracts
 
 def get_next_message_info():
@@ -202,20 +220,20 @@ def get_next_message_info():
 
 def send_to_webhook(final_text):
     if not WEBHOOK_URL:
-        print("Ошибка: DISCORD_WEBHOOK_URL не настроен!")
+        print("[ERROR] DISCORD_WEBHOOK_URL не настроен!")
         return
     payload = {"content": final_text}
     try:
         res = requests.post(WEBHOOK_URL, json=payload)
         if res.status_code in [200, 204]:
-            print("Сообщение успешно отправлено через Вебхук!")
+            print("[LOG] Сообщение успешно отправлено через Вебхук!")
         else:
-            print(f"Ошибка вебхука: {res.status_code}")
+            print(f"[ERROR] Ошибка вебхука: {res.status_code}")
     except Exception as e:
-        print(f"Не удалось отправить вебхук: {e}")
+        print(f"[ERROR] Не удалось отправить вебхук: {e}")
 
 def cron_loop():
-    print("Фоновый таймер вебхука запущен.")
+    print("[LOG] Фоновый таймер вебхука запущен.")
     while True:
         if is_bot_enabled:
             now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
@@ -298,6 +316,7 @@ HTML_PAGE = """
            try {
                let res = await fetch('/api/stats');
                let data = await res.json();
+               console.log("[DEBUG] API Stats Response:", data);
                
                let statusElem = document.getElementById('status');
                let btn = document.getElementById('action_btn');
@@ -326,7 +345,6 @@ HTML_PAGE = """
                        let row = document.createElement('tr');
                        let warn = c.is_last_day ? '<span class="alert-expiry">⚠️ ПОСЛЕДНИЙ ДЕНЬ</span>' : '';
                        
-                       // Оборачиваем текст в <pre> для красивого моноширинного вывода с сохранением кавычек
                        row.innerHTML = `
                            <td class="td-time">${c.time}</td>
                            <td><pre>${c.text}</pre></td>
@@ -337,7 +355,9 @@ HTML_PAGE = """
                } else {
                    tableBody.innerHTML = `<tr><td colspan="3" style="text-align: center;">Таблица пуста</td></tr>`;
                }
-           } catch(e) { }
+           } catch(e) { 
+               console.error("[ERROR] Ошибка обновления статистики:", e);
+           }
        }
 
        setInterval(() => {
@@ -367,15 +387,18 @@ def toggle_status():
 @app.route('/api/stats')
 def get_stats():
     next_msg, next_time_left, contract_expiry, next_is_last = get_next_message_info()
+    all_contracts = get_all_contracts_from_sheet()
     return jsonify({
         "is_enabled": is_bot_enabled,
         "next_msg": next_msg,
         "next_time_left": next_time_left,
         "contract_expiry": contract_expiry,
         "next_is_last": next_is_last,
-        "all_contracts": get_all_contracts_from_sheet()
+        "all_contracts": all_contracts
     })
 
 if __name__ == '__main__':
+    # Принудительно греем кэш при старте
+    fetch_sheet_rows()
     threading.Thread(target=cron_loop, daemon=True).start()
     app.run(host='0.0.0.0', port=10000)
