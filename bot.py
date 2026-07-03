@@ -7,7 +7,7 @@ import threading
 import time
 import warnings
 
-# Отключаем предупреждения о парсинге дат, чтобы логи на Render были чистыми
+# Отключаем предупреждения о парсинге дат, чтобы не засорять консоль Render
 warnings.filterwarnings("ignore", category=UserWarning, module="datetime")
 
 # ================= НАСТРОЙКИ БОТА =================
@@ -17,9 +17,36 @@ SHEET_ID = "1B8Ts_DHQ11878tw1Qa8mUdjxFdCb249v78R10n9czBw"
 
 WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')
 
-# Глобальные переменные статуса
+# Глобальные переменные статуса и КЭШ таблицы
 start_time = datetime.datetime.utcnow()
 is_bot_enabled = True  # Флаг паузы
+
+SHEET_ROWS_CACHE = {
+    "data": [],
+    "last_fetched": 0
+}
+CACHE_TIMEOUT = 10  # Время жизни кэша в секундах
+
+# Безопасное скачивание таблицы с кэшированием (защита от лимитов Google)
+def fetch_sheet_rows():
+    global SHEET_ROWS_CACHE
+    now = time.time()
+    # Если кэш пуст или прошло больше 10 секунд — обновляем данные
+    if now - SHEET_ROWS_CACHE["last_fetched"] > CACHE_TIMEOUT or not SHEET_ROWS_CACHE["data"]:
+        url = f"[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){SHEET_ID}/export?format=csv"
+        try:
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                response.encoding = 'utf-8'
+                lines = response.text.splitlines()
+                reader = csv.reader(lines)
+                SHEET_ROWS_CACHE["data"] = list(reader)
+                SHEET_ROWS_CACHE["last_fetched"] = now
+            else:
+                print(f"Предупреждение: Google Sheets вернул код {response.status_code}. Используем кэш.")
+        except Exception as e:
+            print(f"Ошибка получения данных из Google Sheets: {e}")
+    return SHEET_ROWS_CACHE["data"]
 
 def parse_time(time_str):
     try:
@@ -45,6 +72,7 @@ def check_is_last_day(expiry_str):
         now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
         current_date = now.date()
         
+        # Парсим диапазоны дат вроде "29.06-05.07" или "29.06 - 06.07"
         if "-" in expiry_str:
             parts = expiry_str.split("-")
             expiry_str = parts[1].strip()
@@ -70,7 +98,7 @@ def format_webhook_message(text_part, expiry_str):
     if not text_part: 
         return None
         
-    # Бот шлет текст ровно так, как он записан в таблице (со всеми кавычками, если они там есть)
+    # Текст отправляется абсолютно без изменений (со всеми кавычками из таблицы)
     if ROLE_ID and ROLE_ID.isdigit():
         final_msg = f"<@&{ROLE_ID}>\n{text_part}"
     else:
@@ -82,70 +110,51 @@ def format_webhook_message(text_part, expiry_str):
     return final_msg
 
 def get_text_by_time(target_time):
-    url = f"[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){SHEET_ID}/export?format=csv"
-    try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            response.encoding = 'utf-8'
-            lines = response.text.splitlines()
-            reader = csv.reader(lines)
-            for row in reader:
-                if len(row) >= 2:
-                    time_part = row[0].strip()
-                    if not time_part: 
-                        continue
-                    times_list = time_part.split()
-                    for single_time in times_list:
-                        sheet_time = parse_time(single_time)
-                        if sheet_time == target_time:
-                            text_part = row[1].strip()
-                            expiry_part = row[2].strip() if len(row) >= 3 else ""
-                            return format_webhook_message(text_part, expiry_part)
-    except Exception as e:
-        print(f"Ошибка при обращении к таблице: {e}")
+    rows = fetch_sheet_rows()
+    for row in rows:
+        if len(row) >= 2:
+            time_part = row[0].strip()
+            if not time_part: 
+                continue
+            times_list = time_part.split()
+            for single_time in times_list:
+                sheet_time = parse_time(single_time)
+                if sheet_time == target_time:
+                    text_part = row[1].strip()
+                    expiry_part = row[2].strip() if len(row) >= 3 else ""
+                    return format_webhook_message(text_part, expiry_part)
     return None
 
 def get_all_contracts_from_sheet():
-    url = f"[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){SHEET_ID}/export?format=csv"
+    rows = fetch_sheet_rows()
     contracts = []
-    try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            response.encoding = 'utf-8'
-            lines = response.text.splitlines()
-            reader = csv.reader(lines)
-            for row in reader:
-                if len(row) < 2: 
-                    continue
-                    
-                time_part = row[0].strip()
-                text_part = row[1].strip()
-                
-                if not time_part or not text_part:
-                    continue
-                
-                # Для сайта убираем кавычки из превью, чтобы интерфейс выглядел аккуратно
-                clean_text = text_part.replace("```", "").replace("`", "")
-                
-                expiry_part = row[2].strip() if len(row) >= 3 else ""
-                if "срок" in expiry_part.lower() or "годн" in expiry_part.lower():
-                    expiry_part = ""
+    for row in rows:
+        if len(row) < 2: 
+            continue
+            
+        time_part = row[0].strip()
+        text_part = row[1].strip()
+        
+        if not time_part or not text_part:
+            continue
+            
+        expiry_part = row[2].strip() if len(row) >= 3 else ""
+        if "срок" in expiry_part.lower() or "годн" in expiry_part.lower():
+            expiry_part = ""
 
-                contracts.append({
-                    "time": time_part,
-                    "text": clean_text,
-                    "expiry": expiry_part if expiry_part else "Не указан",
-                    "is_last_day": check_is_last_day(expiry_part)
-                })
-    except Exception as e:
-        print(f"Ошибка получения контрактов: {e}")
+        contracts.append({
+            "time": time_part,
+            "text": text_part,
+            "expiry": expiry_part if expiry_part else "Не указан",
+            "is_last_day": check_is_last_day(expiry_part)
+        })
     return contracts
 
 def get_next_message_info():
     if not is_bot_enabled:
         return "Рассылка на паузе", "--", "", False
 
-    url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
+    rows = fetch_sheet_rows()
 
     now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
     current_minutes = now.hour * 60 + now.minute
@@ -156,47 +165,38 @@ def get_next_message_info():
     is_last = False
     min_diff = 9999
 
-    try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            response.encoding = 'utf-8'
-            lines = response.text.splitlines()
-            reader = csv.reader(lines)
+    for row in rows:
+        if len(row) >= 2:
+            time_part = row[0].strip()
+            if not time_part:
+                continue
+            times_list = time_part.split()
+            for single_time in times_list:
+                sheet_time = parse_time(single_time)
+                if not sheet_time or ":" not in sheet_time:
+                    continue
 
-            for row in reader:
-                if len(row) >= 2:
-                    time_part = row[0].strip()
-                    if not time_part:
-                        continue
-                    times_list = time_part.split()
-                    for single_time in times_list:
-                        sheet_time = parse_time(single_time)
-                        if not sheet_time or ":" not in sheet_time:
-                            continue
+                try:
+                    t_hours, t_mins = map(int, sheet_time.split(':'))
+                    sheet_minutes = t_hours * 60 + t_mins
 
-                        try:
-                            t_hours, t_mins = map(int, sheet_time.split(':'))
-                            sheet_minutes = t_hours * 60 + t_mins
+                    diff = sheet_minutes - current_minutes
+                    if diff <= 0:
+                        diff += 1440
 
-                            diff = sheet_minutes - current_minutes
-                            if diff <= 0:
-                                diff += 1440
+                    if diff < min_diff:
+                        min_diff = diff
+                        next_text = row[1].strip()
+                        contract_expiry = row[2].strip() if len(row) >= 3 and "срок" not in row[2].lower() else ""
+                        is_last = check_is_last_day(contract_expiry)
+                except:
+                    continue
 
-                            if diff < min_diff:
-                                min_diff = diff
-                                next_text = row[1].strip().replace("```", "").replace("`", "")
-                                contract_expiry = row[2].strip() if len(row) >= 3 and "срок" not in row[2].lower() else ""
-                                is_last = check_is_last_day(contract_expiry)
-                        except:
-                            continue
-
-            if min_diff != 9999:
-                if min_diff >= 60:
-                    time_left_str = f"{min_diff // 60} ч. {min_diff % 60} мин."
-                else:
-                    time_left_str = f"{min_diff} min_diff."
-    except Exception as e:
-        next_text = f"Ошибка проверки: {e}"
+    if min_diff != 9999:
+        if min_diff >= 60:
+            time_left_str = f"{min_diff // 60} ч. {min_diff % 60} мин."
+        else:
+            time_left_str = f"{min_diff} мин."
 
     return next_text, time_left_str, contract_expiry, is_last
 
@@ -258,6 +258,7 @@ HTML_PAGE = """
        .td-time { color: #a6e3a1; font-weight: bold; white-space: nowrap; }
        .td-expiry { color: #f9e2af; font-weight: bold; white-space: nowrap; }
        .alert-expiry { color: #f75a68; font-weight: bold; font-size: 11px; display: block; margin-top: 4px; background: rgba(247,90,104,0.1); padding: 2px 6px; border-radius: 4px; text-align: center; }
+       pre { white-space: pre-wrap; word-break: break-all; margin: 0; font-family: monospace; color: #e1e1e6; }
    </style>
 </head>
 <body>
@@ -272,7 +273,7 @@ HTML_PAGE = """
 
        <div class="next-box">
            <div class="next-title">СЛЕДУЮЩИЙ КОНТРАКТ:</div>
-           <div id="next_text" style="font-weight: bold; color: #f5c2e7;">Загрузка...</div>
+           <div id="next_text" style="font-weight: bold; color: #f5c2e7; white-space: pre-wrap;">Загрузка...</div>
            <div style="margin-top: 5px; font-size: 14px;">Отправка через: <span id="next_time" style="color: #a6e3a1; font-weight: bold;">--</span></div>
            <div style="margin-top: 5px; font-size: 14px;">Срок контракта: <span id="contract_expiry" style="color: #f9e2af;">--</span> <span id="next_alert" style="color: #f75a68; font-weight: bold;"></span></div>
        </div>
@@ -325,9 +326,10 @@ HTML_PAGE = """
                        let row = document.createElement('tr');
                        let warn = c.is_last_day ? '<span class="alert-expiry">⚠️ ПОСЛЕДНИЙ ДЕНЬ</span>' : '';
                        
+                       // Оборачиваем текст в <pre> для красивого моноширинного вывода с сохранением кавычек
                        row.innerHTML = `
                            <td class="td-time">${c.time}</td>
-                           <td>${c.text}</td>
+                           <td><pre>${c.text}</pre></td>
                            <td class="td-expiry">${c.expiry}${warn}</td>
                        `;
                        tableBody.appendChild(row);
@@ -377,6 +379,3 @@ def get_stats():
 if __name__ == '__main__':
     threading.Thread(target=cron_loop, daemon=True).start()
     app.run(host='0.0.0.0', port=10000)
-
-
-    
