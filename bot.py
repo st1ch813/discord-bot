@@ -59,9 +59,9 @@ def format_announcement(text_part, ad_type, expiry_str):
     
     # Подставляем команду по цвету из колонки D
     prefix = ""
-    if "красное" in ad_type:
+    if "красн" in ad_type:
         prefix = "/adv "
-    elif "зеленое" in ad_type:
+    elif "зелен" in ad_type:
         prefix = "/wnews "
         
     # Формируем блок кода автоматически, тебе больше не надо писать ``` ручками
