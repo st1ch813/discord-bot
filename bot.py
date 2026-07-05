@@ -21,26 +21,23 @@ logger = logging.getLogger(__name__)
 # Инициализация Flask
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "super-secret-key-12345")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "WN063")  # Пароль для панели управления
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "WN063")
 
 # Глобальные переменные состояния
 system_state = {
     "is_paused": False,
-    "skipped_contracts": []  # Список пропущенных временных слотов (например, "12:55_29.06-05.07")
+    "skipped_contracts": []
 }
 
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 
 def format_money(value):
-    """Красиво форматирует числа в денежный формат, например: 1 250 000 $"""
     return f"{value:,.0f} $".replace(",", " ")
 
 def get_msk_time():
-    """Возвращает текущее время по МСК (UTC+3)"""
     return datetime.utcnow() + timedelta(hours=3)
 
 def parse_database():
-    """Скачивает актуальную Google Таблицу в формате CSV и парсит активные контракты"""
     contracts = []
     export_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
     now = get_msk_time()
@@ -66,24 +63,20 @@ def parse_database():
             times = [t.strip() for t in times_str.split() if t.strip()]
             
             if times and clean_text:
-                # По умолчанию статус обычный
                 date_status = "active" 
-                
-                # Пробуем распарсить даты для определения "Последний день" и "Просрочено"
                 try:
                     dates = date_range.split('-')
                     if len(dates) == 2:
                         end_str = dates[1].strip()
                         current_year = now.year
                         
-                        # Конечная дата (день окончания включительно)
                         end_date = datetime.strptime(f"{end_str}.{current_year}", "%d.%m.%Y").date()
                         today = now.date()
                         
                         if today > end_date:
-                            date_status = "expired"  # Просрочено
+                            date_status = "expired"
                         elif today == end_date:
-                            date_status = "last_day" # Последний день
+                            date_status = "last_day"
                 except Exception:
                     pass
 
@@ -99,13 +92,11 @@ def parse_database():
     return contracts
 
 def get_next_contract_info():
-    """Определяет следующий по расписанию контракт"""
     now = get_msk_time()
     contracts = parse_database()
     upcoming_contracts = []
     
     for contract in contracts:
-        # Пропускаем просроченные контракты в рассылке очереди
         if contract["date_status"] == "expired":
             continue
             
@@ -247,13 +238,13 @@ def dashboard():
                 <div class="bg-[#181111] glow-card rounded-lg p-6">
                     <h2 class="text-md font-bold text-white mb-4">Все active-контракты</h2>
                     <div class="overflow-x-auto">
-                        <table class="w-full text-left border-collapse">
+                        <table class="w-full text-left border-collapse table-auto">
                             <thead>
                                 <tr class="border-b border-red-900/40 text-gray-400 text-xs uppercase">
-                                    <th class="py-3 px-4">Время</th>
-                                    <th class="py-3 px-4">Текст контракта</th>
-                                    <th class="py-3 px-4">Срок действия</th>
-                                    <th class="py-3 px-4 text-right">Статус</th>
+                                    <th class="py-3 px-4 whitespace-nowrap">Время</th>
+                                    <th class="py-3 px-4 w-full">Текст контракта</th>
+                                    <th class="py-3 px-4 whitespace-nowrap">Срок действия</th>
+                                    <th class="py-3 px-4 text-center whitespace-nowrap">Статус</th>
                                 </tr>
                             </thead>
                             <tbody id="contracts-table-body" class="divide-y divide-red-900/20 text-sm">
@@ -442,7 +433,7 @@ def dashboard():
                     const nextContainer = document.getElementById('next-contract-container');
                     if (data.next_contract) {
                         const nc = data.next_contract;
-                        let badge = nc.is_skipped ? '<span class="bg-red-900/60 text-red-300 text-[10px] px-2 py-0.5 rounded">ПРОПУЩЕН</span>' : `<span class="bg-yellow-900/40 text-yellow-500 text-[10px] px-2 py-0.5 rounded">ЧЕРЕЗ ${nc.time_left}</span>`;
+                        let badge = nc.is_skipped ? '<span class="bg-red-900/60 text-red-300 text-[10px] px-2 py-0.5 rounded whitespace-nowrap">ПРОПУЩЕН</span>' : `<span class="bg-yellow-900/40 text-yellow-500 text-[10px] px-2 py-0.5 rounded whitespace-nowrap">ЧЕРЕЗ ${nc.time_left}</span>`;
                         nextContainer.innerHTML = `
                             <div class="flex justify-between text-xs text-gray-400 border-b border-red-900/10 pb-2">
                                 <span>Слот: <strong>${nc.time_str} МСК</strong> (${nc.date_range})</span>${badge}
@@ -456,22 +447,22 @@ def dashboard():
                     const tableBody = document.getElementById('contracts-table-body');
                     if (data.all_contracts && data.all_contracts.length > 0) {
                         tableBody.innerHTML = data.all_contracts.map(c => {
-                            let statusBadge = '<span class="bg-green-950/60 text-green-400 border border-green-900/60 text-[10px] font-bold px-2 py-0.5 rounded">Активен</span>';
+                            let statusBadge = '<span class="inline-block bg-green-950/60 text-green-400 border border-green-900/60 text-[10px] font-bold px-2.5 py-1 rounded whitespace-nowrap">Активен</span>';
                             let rowClass = "hover:bg-red-950/5";
                             
                             if (c.date_status === 'last_day') {
-                                statusBadge = '<span class="bg-amber-950/60 text-amber-400 border border-amber-900/60 text-[10px] font-bold px-2 py-0.5 rounded animate-pulse">Последний день</span>';
+                                statusBadge = '<span class="inline-block bg-amber-950/60 text-amber-400 border border-amber-900/60 text-[10px] font-bold px-2.5 py-1 rounded whitespace-nowrap animate-pulse">Последний день</span>';
                             } else if (c.date_status === 'expired') {
-                                statusBadge = '<span class="bg-red-950/60 text-red-400 border border-red-900/60 text-[10px] font-bold px-2 py-0.5 rounded">Просрочен</span>';
-                                rowClass = "opacity-40 hover:bg-red-950/5"; // Делаем просроченные строчки полупрозрачными
+                                statusBadge = '<span class="inline-block bg-red-950/60 text-red-400 border border-red-900/60 text-[10px] font-bold px-2.5 py-1 rounded whitespace-nowrap">Просрочен</span>';
+                                rowClass = "opacity-40 hover:bg-red-950/5";
                             }
 
                             return `
                                 <tr class="${rowClass}">
-                                    <td class="py-2 px-4 text-red-400">${c.times.join(', ')}</td>
-                                    <td class="py-2 px-4 text-gray-300">${c.text}</td>
-                                    <td class="py-2 px-4 text-gray-400">${c.date_range}</td>
-                                    <td class="py-2 px-4 text-right">${statusBadge}</td>
+                                    <td class="py-3 px-4 text-red-400 whitespace-nowrap">${c.times.join(', ')}</td>
+                                    <td class="py-3 px-4 text-gray-300 break-words max-w-xs md:max-w-xl">${c.text}</td>
+                                    <td class="py-3 px-4 text-gray-400 whitespace-nowrap">${c.date_range}</td>
+                                    <td class="py-3 px-4 text-center">${statusBadge}</td>
                                 </tr>
                             `;
                         }).join('');
@@ -566,7 +557,6 @@ async def schedule_loop():
                 current_time_str = now.strftime("%H:%M")
                 if not system_state["is_paused"]:
                     for contract in parse_database():
-                        # Защита: бот не будет слать в Дискорд просроченные контракты
                         if contract["date_status"] == "expired":
                             continue
                         if current_time_str in contract["times"]:
