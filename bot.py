@@ -258,7 +258,7 @@ def dashboard():
                         <h2 class="text-lg font-bold text-white">Параметры контракта</h2>
                         <div>
                             <label class="block text-xs uppercase text-gray-400 mb-2">Текст</label>
-                            <textarea id="calc-text" rows="8" placeholder="Вставьте text контракта..." 
+                            <textarea id="calc-text" rows="8" placeholder="Вставьте текст контракта..." 
                                       class="w-full bg-[#100b0b] border border-red-950 rounded-lg p-3 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-red-500 resize-none"
                                       oninput="calculateContract()"></textarea>
                         </div>
@@ -299,7 +299,7 @@ def dashboard():
                             <h2 class="text-lg font-bold text-white">Результаты расчета</h2>
                             <div class="bg-[#100b0b] p-3 rounded-lg border border-red-950 text-xs space-y-1 text-gray-400">
                                 <div class="flex justify-between"><span>Всего символов:</span><span id="res-total-chars" class="text-white">0</span></div>
-                                <div class="flex justify-between"><span>За 1 выход:</span><span id="res-one-day-sum" class="text-white">0 $</span></div>
+                                <div class="flex justify-between"><span>За 1 сообщение:</span><span id="res-one-day-sum" class="text-white">0 $</span></div>
                             </div>
                             <div class="space-y-2">
                                 <div class="bg-red-950/20 border border-red-900/40 p-3 rounded-lg">
@@ -447,7 +447,7 @@ def dashboard():
                             <div class="bg-[#100b0b] p-3 rounded border border-red-950 ${nc.is_skipped ? 'line-through text-gray-500' : 'text-gray-200'} text-sm">${nc.text}</div>
                         `;
                     } else {
-                        nextContainer.innerHTML = '<div class="text-center text-gray-500 text-sm">Нет active-контрактов</div>';
+                        nextContainer.innerHTML = '<div class="text-center text-gray-500 text-sm">Нет активных контрактов</div>';
                     }
 
                     const tableBody = document.getElementById('contracts-table-body');
