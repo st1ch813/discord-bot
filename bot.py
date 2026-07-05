@@ -12,7 +12,6 @@ from flask import Flask, render_template_string, jsonify, request, session, redi
 # ================= НАСТРОЙКИ БОТА =================
 ROLE_ID = "1447219553259094219"
 SHEET_ID = "1B8Ts_DHQ11878tw1Qa8mUdjxFdCb249v78R10n9czBw"
-CSV_FILE_PATH = "База данных  - Лист1.csv"
 # ==================================================
 
 # Настройка логирования
@@ -41,31 +40,42 @@ def get_msk_time():
     return datetime.utcnow() + timedelta(hours=3)
 
 def parse_database():
-    """Парсит CSV-файл и возвращает список всех активных контрактов"""
+    """Скачивает актуальную Google Таблицу в формате CSV и парсит активные контракты"""
     contracts = []
-    if not os.path.exists(CSV_FILE_PATH):
-        logger.error(f"Файл {CSV_FILE_PATH} не найден!")
-        return contracts
-
+    # Ссылка для экспорта первого листа Google Таблицы в CSV
+    export_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
+    
     try:
-        with open(CSV_FILE_PATH, mode='r', encoding='utf-8') as f:
-            reader = csv.reader(f)
-            for row in reader:
-                if len(row) < 3:
-                    continue
-                times_str, text, date_range = row[0], row[1], row[2]
+        response = requests.get(export_url, timeout=10)
+        if response.status_code != 200:
+            logger.error(f"Не удалось скачать Google Таблицу. Статус: {response.status_code}")
+            return contracts
+            
+        # Декодируем содержимое ответа сервера в текст
+        csv_data = response.content.decode('utf-8').splitlines()
+        reader = csv.reader(csv_data)
+        
+        for row in reader:
+            if len(row) < 3:
+                continue
+            times_str, text, date_range = row[0], row[1], row[2]
+            
+            # Пропускаем строку заголовков, если она есть
+            if "время" in times_str.lower() or "текст" in text.lower():
+                诚ontinue
                 
-                # Очистка текста от лишних кавычек
-                clean_text = text.strip().strip('"').strip('`').strip()
-                times = [t.strip() for t in times_str.split() if t.strip()]
-                
+            # Очистка текста от лишних кавычек
+            clean_text = text.strip().strip('"').strip('`').strip()
+            times = [t.strip() for t in times_str.split() if t.strip()]
+            
+            if times and clean_text:
                 contracts.append({
                     "times": times,
                     "text": clean_text,
                     "date_range": date_range.strip()
                 })
     except Exception as e:
-        logger.error(f"Ошибка при чтении CSV: {e}")
+        logger.error(f"Ошибка при импорте/парсинге Google Таблицы: {e}")
     
     return contracts
 
@@ -437,6 +447,8 @@ def dashboard():
                         tableBody.innerHTML = data.all_contracts.map(c => `
                             <tr class="hover:bg-red-950/5"><td class="py-2 px-4 text-red-400">${c.times.join(', ')}</td><td class="py-2 px-4 text-gray-300">${c.text}</td><td class="py-2 px-4 text-gray-400">${c.date_range}</td></tr>
                         `).join('');
+                    } else {
+                        tableBody.innerHTML = '<tr><td colspan="3" class="text-center py-8 text-gray-500">Нет контрактов в базе</td></tr>';
                     }
                 } catch (e) {}
             }
@@ -444,7 +456,7 @@ def dashboard():
             async function togglePause() { await fetch('/api/toggle-pause', { method: 'POST' }); updateStats(); }
             async function toggleSkipNext() { await fetch('/api/skip-next', { method: 'POST' }); updateStats(); closeControlModal(); }
 
-            setInterval(updateStats, 1000);
+            setInterval(updateStats, 2000);
             updateStats();
         </script>
     </body>
@@ -534,8 +546,5 @@ async def schedule_loop():
         await asyncio.sleep(15)
 
 if __name__ == "__main__":
-    # Запускаем Flask в отдельном daemon-потоке
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False, use_reloader=False), daemon=True).start()
-    
-    # Безопасный запуск асинхронного цикла планировщика для любых версий Python
     asyncio.run(schedule_loop())
