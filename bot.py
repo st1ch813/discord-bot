@@ -42,8 +42,8 @@ def get_msk_time():
 def parse_database():
     """Скачивает актуальную Google Таблицу в формате CSV и парсит активные контракты"""
     contracts = []
-    # Ссылка для экспорта первого листа Google Таблицы в CSV
     export_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
+    now = get_msk_time()
     
     try:
         response = requests.get(export_url, timeout=10)
@@ -51,7 +51,6 @@ def parse_database():
             logger.error(f"Не удалось скачать Google Таблицу. Статус: {response.status_code}")
             return contracts
             
-        # Декодируем содержимое ответа сервера в текст
         csv_data = response.content.decode('utf-8').splitlines()
         reader = csv.reader(csv_data)
         
@@ -60,25 +59,45 @@ def parse_database():
                 continue
             times_str, text, date_range = row[0], row[1], row[2]
             
-            # Пропускаем строку заголовков, если она есть
             if "время" in times_str.lower() or "текст" in text.lower():
                 continue
                 
-            # Очистка текста от лишних кавычек
             clean_text = text.strip().strip('"').strip('`').strip()
             times = [t.strip() for t in times_str.split() if t.strip()]
             
             if times and clean_text:
+                # По умолчанию статус обычный
+                date_status = "active" 
+                
+                # Пробуем распарсить даты для определения "Последний день" и "Просрочено"
+                try:
+                    dates = date_range.split('-')
+                    if len(dates) == 2:
+                        end_str = dates[1].strip()
+                        current_year = now.year
+                        
+                        # Конечная дата (день окончания включительно)
+                        end_date = datetime.strptime(f"{end_str}.{current_year}", "%d.%m.%Y").date()
+                        today = now.date()
+                        
+                        if today > end_date:
+                            date_status = "expired"  # Просрочено
+                        elif today == end_date:
+                            date_status = "last_day" # Последний день
+                except Exception:
+                    pass
+
                 contracts.append({
                     "times": times,
                     "text": clean_text,
-                    "date_range": date_range.strip()
+                    "date_range": date_range.strip(),
+                    "date_status": date_status
                 })
     except Exception as e:
         logger.error(f"Ошибка при импорте/парсинге Google Таблицы: {e}")
     
     return contracts
-    
+
 def get_next_contract_info():
     """Определяет следующий по расписанию контракт"""
     now = get_msk_time()
@@ -86,6 +105,10 @@ def get_next_contract_info():
     upcoming_contracts = []
     
     for contract in contracts:
+        # Пропускаем просроченные контракты в рассылке очереди
+        if contract["date_status"] == "expired":
+            continue
+            
         try:
             dates = contract["date_range"].split('-')
             if len(dates) == 2:
@@ -230,10 +253,11 @@ def dashboard():
                                     <th class="py-3 px-4">Время</th>
                                     <th class="py-3 px-4">Текст контракта</th>
                                     <th class="py-3 px-4">Срок действия</th>
+                                    <th class="py-3 px-4 text-right">Статус</th>
                                 </tr>
                             </thead>
                             <tbody id="contracts-table-body" class="divide-y divide-red-900/20 text-sm">
-                                <tr><td colspan="3" class="text-center py-8 text-gray-500">Загрузка...</td></tr>
+                                <tr><td colspan="4" class="text-center py-8 text-gray-500">Загрузка...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -250,12 +274,7 @@ def dashboard():
                                       class="w-full bg-[#100b0b] border border-red-950 rounded-lg p-3 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-red-500 resize-none"
                                       oninput="calculateContract()"></textarea>
                         </div>
-                        <div class="flex items-center">
-                            <input type="checkbox" id="calc-exclude-prefix" checked onchange="calculateContract()" class="rounded bg-[#100b0b] border-red-950 text-red-600 h-4 w-4">
-                            <label for="calc-exclude-prefix" class="ml-2 text-xs text-gray-400 cursor-pointer">
-                                Исключать префикс /wnews [Реклама] (16 симв.)
-                            </label>
-                        </div>
+                        
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-xs uppercase text-gray-400 mb-2">Тип объявления</label>
@@ -284,7 +303,6 @@ def dashboard():
                             <h2 class="text-lg font-bold text-white">Результаты расчета</h2>
                             <div class="bg-[#100b0b] p-3 rounded-lg border border-red-950 text-xs space-y-1 text-gray-400">
                                 <div class="flex justify-between"><span>Всего символов:</span><span id="res-total-chars" class="text-white">0</span></div>
-                                <div class="flex justify-between"><span>Расчетных символов:</span><span id="res-calc-chars" class="text-red-400">0</span></div>
                                 <div class="flex justify-between"><span>За 1 день:</span><span id="res-one-day-sum" class="text-white">0 $</span></div>
                             </div>
                             <div class="space-y-2">
@@ -385,23 +403,16 @@ def dashboard():
 
             function calculateContract() {
                 const text = document.getElementById('calc-text').value;
-                const excludePrefix = document.getElementById('calc-exclude-prefix').checked;
                 const days = parseInt(document.getElementById('calc-days').value) || 1;
 
-                let rawLength = text.length;
-                let calcLength = rawLength;
-
-                if (excludePrefix && text.toLowerCase().includes('/wnews [реклама]')) {
-                    calcLength = Math.max(0, calcLength - 16);
-                }
+                let calcLength = text.length;
 
                 const oneDaySum = calcLength * contractRate;
                 const totalSum = oneDaySum * days;
                 const treasurySum = totalSum * 0.75;
                 const employeeSum = totalSum * 0.25;
 
-                document.getElementById('res-total-chars').innerText = rawLength;
-                document.getElementById('res-calc-chars').innerText = calcLength;
+                document.getElementById('res-total-chars').innerText = calcLength;
                 document.getElementById('res-one-day-sum').innerText = oneDaySum.toLocaleString() + ' $';
                 document.getElementById('res-total-sum').innerText = totalSum.toLocaleString() + ' $';
                 document.getElementById('res-treasury-sum').innerText = treasurySum.toLocaleString() + ' $';
@@ -444,11 +455,28 @@ def dashboard():
 
                     const tableBody = document.getElementById('contracts-table-body');
                     if (data.all_contracts && data.all_contracts.length > 0) {
-                        tableBody.innerHTML = data.all_contracts.map(c => `
-                            <tr class="hover:bg-red-950/5"><td class="py-2 px-4 text-red-400">${c.times.join(', ')}</td><td class="py-2 px-4 text-gray-300">${c.text}</td><td class="py-2 px-4 text-gray-400">${c.date_range}</td></tr>
-                        `).join('');
+                        tableBody.innerHTML = data.all_contracts.map(c => {
+                            let statusBadge = '<span class="bg-green-950/60 text-green-400 border border-green-900/60 text-[10px] font-bold px-2 py-0.5 rounded">Активен</span>';
+                            let rowClass = "hover:bg-red-950/5";
+                            
+                            if (c.date_status === 'last_day') {
+                                statusBadge = '<span class="bg-amber-950/60 text-amber-400 border border-amber-900/60 text-[10px] font-bold px-2 py-0.5 rounded animate-pulse">Последний день</span>';
+                            } else if (c.date_status === 'expired') {
+                                statusBadge = '<span class="bg-red-950/60 text-red-400 border border-red-900/60 text-[10px] font-bold px-2 py-0.5 rounded">Просрочен</span>';
+                                rowClass = "opacity-40 hover:bg-red-950/5"; // Делаем просроченные строчки полупрозрачными
+                            }
+
+                            return `
+                                <tr class="${rowClass}">
+                                    <td class="py-2 px-4 text-red-400">${c.times.join(', ')}</td>
+                                    <td class="py-2 px-4 text-gray-300">${c.text}</td>
+                                    <td class="py-2 px-4 text-gray-400">${c.date_range}</td>
+                                    <td class="py-2 px-4 text-right">${statusBadge}</td>
+                                </tr>
+                            `;
+                        }).join('');
                     } else {
-                        tableBody.innerHTML = '<tr><td colspan="3" class="text-center py-8 text-gray-500">Нет контрактов в базе</td></tr>';
+                        tableBody.innerHTML = '<tr><td colspan="4" class="text-center py-8 text-gray-500">Нет контрактов в базе</td></tr>';
                     }
                 } catch (e) {}
             }
@@ -538,6 +566,9 @@ async def schedule_loop():
                 current_time_str = now.strftime("%H:%M")
                 if not system_state["is_paused"]:
                     for contract in parse_database():
+                        # Защита: бот не будет слать в Дискорд просроченные контракты
+                        if contract["date_status"] == "expired":
+                            continue
                         if current_time_str in contract["times"]:
                             if f"{current_time_str}_{contract['date_range']}" not in system_state["skipped_contracts"]:
                                 send_discord_webhook(contract["text"])
