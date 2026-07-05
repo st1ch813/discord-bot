@@ -14,16 +14,13 @@ ROLE_ID = "1447219553259094219"
 SHEET_ID = "1B8Ts_DHQ11878tw1Qa8mUdjxFdCb249v78R10n9czBw"
 # ==================================================
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Инициализация Flask
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "super-secret-key-12345")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "WN063")
 
-# Глобальные переменные состояния
 system_state = {
     "is_paused": False,
     "skipped_contracts": []
@@ -241,7 +238,7 @@ def dashboard():
                         <table class="w-full text-left border-collapse table-auto">
                             <thead>
                                 <tr class="border-b border-red-900/40 text-gray-400 text-xs uppercase">
-                                    <th class="py-3 px-4 whitespace-nowrap">Время</th>
+                                    <th class="py-3 px-4 w-[220px]">Время</th>
                                     <th class="py-3 px-4 w-full">Текст контракта</th>
                                     <th class="py-3 px-4 whitespace-nowrap">Срок действия</th>
                                     <th class="py-3 px-4 text-center whitespace-nowrap">Статус</th>
@@ -264,6 +261,14 @@ def dashboard():
                             <textarea id="calc-text" rows="8" placeholder="Вставьте текст контракта..." 
                                       class="w-full bg-[#100b0b] border border-red-950 rounded-lg p-3 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-red-500 resize-none"
                                       oninput="calculateContract()"></textarea>
+                        </div>
+                        
+                        <div class="flex items-center space-x-2 py-1">
+                            <input type="checkbox" id="calc-exclude-prefix" onchange="calculateContract()" 
+                                   class="w-4 h-4 bg-[#100b0b] border border-red-950 rounded text-red-600 focus:ring-0 focus:ring-offset-0 cursor-pointer">
+                            <label for="calc-exclude-prefix" class="text-sm text-gray-300 select-none cursor-pointer hover:text-white transition">
+                                Исключать префикс /wnews [Реклама] (16 симв.)
+                            </label>
                         </div>
                         
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -378,6 +383,8 @@ def dashboard():
             function openControlModal() { document.getElementById('control-modal').classList.remove('hidden'); }
             function closeControlModal() { document.getElementById('control-modal').classList.add('hidden'); }
 
+            fn=function(){};
+
             function setContractType(type) {
                 contractRate = (type === 'green') ? 400 : 200;
                 document.getElementById('btn-type-green').className = type === 'green' ? "py-2 px-4 rounded-lg border border-red-900/60 font-semibold text-sm bg-red-950/40 text-red-400" : "py-2 px-4 rounded-lg border border-gray-800 font-semibold text-sm text-gray-400";
@@ -395,8 +402,21 @@ def dashboard():
             function calculateContract() {
                 const text = document.getElementById('calc-text').value;
                 const days = parseInt(document.getElementById('calc-days').value) || 1;
+                const excludePrefix = document.getElementById('calc-exclude-prefix').checked;
 
                 let calcLength = text.length;
+                
+                // Если стоит чекбокс и текст начинается с префикса или просто содержит его - вычитаем 16 символов
+                if (excludePrefix && calcLength > 0) {
+                    if (text.includes('/wnews [Реклама]')) {
+                        calcLength = Math.max(0, calcLength - 16);
+                    } else if (calcLength >= 16) {
+                        // На всякий случай, если префикс стерт, но галочка стоит
+                        calcLength = calcLength - 16;
+                    } else {
+                        calcLength = 0;
+                    }
+                }
 
                 const oneDaySum = calcLength * contractRate;
                 const totalSum = oneDaySum * days;
@@ -457,9 +477,12 @@ def dashboard():
                                 rowClass = "opacity-40 hover:bg-red-950/5";
                             }
 
+                            // Компактная генерация плашек времени
+                            let timeBadges = c.times.map(t => `<span class="inline-block bg-[#261616] text-red-400 border border-red-950 text-xs px-2 py-0.5 rounded font-mono shadow-sm">${t}</span>`).join(' ');
+
                             return `
                                 <tr class="${rowClass}">
-                                    <td class="py-3 px-4 text-red-400 whitespace-nowrap">${c.times.join(', ')}</td>
+                                    <td class="py-3 px-4"><div class="flex flex-wrap gap-1.5 max-w-[210px]">${timeBadges}</div></td>
                                     <td class="py-3 px-4 text-gray-300 break-words max-w-xs md:max-w-xl">${c.text}</td>
                                     <td class="py-3 px-4 text-gray-400 whitespace-nowrap">${c.date_range}</td>
                                     <td class="py-3 px-4 text-center">${statusBadge}</td>
