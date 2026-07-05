@@ -139,7 +139,6 @@ def dashboard():
     </head>
     <body class="min-h-screen flex flex-col pb-10">
 
-        <!-- Шапка -->
         <header class="bg-[#1a1313] border-b border-red-900/40 p-4 sticky top-0 z-50 shadow-lg">
             <div class="max-w-6xl mx-auto flex justify-between items-center">
                 <div class="flex items-center space-x-6">
@@ -183,7 +182,6 @@ def dashboard():
 
         <main class="max-w-6xl w-full mx-auto px-4 mt-8 flex-grow">
             
-            <!-- ВКЛАДКА: МОНИТОРИНГ -->
             <div id="section-monitoring" class="space-y-6">
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div class="bg-[#181111] glow-card rounded-lg p-5 flex items-center justify-between">
@@ -232,7 +230,6 @@ def dashboard():
                 </div>
             </div>
 
-            <!-- ВКЛАДКА: КАЛЬКУЛЯТОР -->
             <div id="section-calculator" class="hidden space-y-6">
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div class="lg:col-span-2 bg-[#181111] glow-card rounded-lg p-6 space-y-4">
@@ -300,7 +297,6 @@ def dashboard():
             </div>
         </main>
 
-        <!-- Модалка входа -->
         <div id="login-modal" class="hidden fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
             <div class="bg-[#181111] border border-red-900/60 rounded-xl max-w-sm w-full p-6 space-y-4">
                 <div class="flex justify-between items-center">
@@ -314,7 +310,6 @@ def dashboard():
             </div>
         </div>
 
-        <!-- Модалка Управления -->
         <div id="control-modal" class="hidden fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
             <div class="bg-[#181111] border border-red-900/60 rounded-xl max-w-md w-full p-6 space-y-4">
                 <div class="flex justify-between items-center">
@@ -517,7 +512,6 @@ def skip_next_api():
 def send_discord_webhook(text):
     if not WEBHOOK_URL: return False
     try:
-        # Формируем текст сообщения с упоминанием роли
         full_content = f"<@&{ROLE_ID}>\n{text}"
         requests.post(WEBHOOK_URL, json={"content": full_content}, timeout=10)
         return True
@@ -540,5 +534,8 @@ async def schedule_loop():
         await asyncio.sleep(15)
 
 if __name__ == "__main__":
+    # Запускаем Flask в отдельном daemon-потоке
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False, use_reloader=False), daemon=True).start()
-    asyncio.get_event_loop().run_until_complete(schedule_loop())
+    
+    # Безопасный запуск асинхронного цикла планировщика для любых версий Python
+    asyncio.run(schedule_loop())
