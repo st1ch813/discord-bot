@@ -62,7 +62,7 @@ def parse_database():
             
             # Пропускаем строку заголовков, если она есть
             if "время" in times_str.lower() or "текст" in text.lower():
-                诚ontinue
+                continue
                 
             # Очистка текста от лишних кавычек
             clean_text = text.strip().strip('"').strip('`').strip()
@@ -78,7 +78,7 @@ def parse_database():
         logger.error(f"Ошибка при импорте/парсинге Google Таблицы: {e}")
     
     return contracts
-
+    
 def get_next_contract_info():
     """Определяет следующий по расписанию контракт"""
     now = get_msk_time()
