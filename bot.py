@@ -10,7 +10,7 @@ import requests
 from flask import Flask, render_template_string, jsonify, request, session, redirect
 
 # ================= НАСТРОЙКИ БОТА =================
-ROLE_ID = "1447219553259094219"
+ROLE_ID = "1470465522431819897"
 SHEET_ID = "1B8Ts_DHQ11878tw1Qa8mUdjxFdCb249v78R10n9czBw"
 # ==================================================
 
@@ -551,11 +551,14 @@ def skip_next_api():
 def send_discord_webhook(text):
     if not WEBHOOK_URL: return False
     try:
-        full_content = f"<@&{ROLE_ID}>\n{text}"
+        # Пинг роли отправляется сверху отдельной строкой, 
+        # а сам текст контракта переносится ниже и оборачивается в тройные обратные кавычки
+        full_content = f"<@&{ROLE_ID}>\n```\n{text}\n```"
+        
         requests.post(WEBHOOK_URL, json={"content": full_content}, timeout=10)
         return True
-    except: return False
-
+    except: 
+        return False
 async def schedule_loop():
     last_sent_minute = -1
     while True:
