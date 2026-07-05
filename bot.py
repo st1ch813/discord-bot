@@ -16,7 +16,7 @@ SHEET_ID = "1B8Ts_DHQ11878tw1Qa8mUdjxFdCb249v78R10n9czBw"
 # ==================================================
 
 # Пароль для доступа к панели (берется из настроек Render, по умолчанию "1234")
-ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '1234')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'WN063')
 WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')
 
 # Глобальные переменные статуса и КЭШ таблицы
