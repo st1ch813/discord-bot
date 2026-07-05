@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Инициализация Flask
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "super-secret-key-12345")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")  # Пароль для панели управления
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "WN063")  # Пароль для панели управления
 
 # Глобальные переменные состояния
 system_state = {
