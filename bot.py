@@ -241,7 +241,7 @@ def dashboard():
                                     <th class="py-3 px-4 w-[220px]">Время</th>
                                     <th class="py-3 px-4 w-full">Текст контракта</th>
                                     <th class="py-3 px-4 whitespace-nowrap">Срок действия</th>
-                                    <th class="py-3 px-4 text-center whitespace-nowrap">Статус</th>
+                                    <th class="py-3 px-4 text-center whitespace-nowrap w-[150px]">Статус</th>
                                 </tr>
                             </thead>
                             <tbody id="contracts-table-body" class="divide-y divide-red-900/20 text-sm">
@@ -258,37 +258,37 @@ def dashboard():
                         <h2 class="text-lg font-bold text-white">Параметры контракта</h2>
                         <div>
                             <label class="block text-xs uppercase text-gray-400 mb-2">Текст</label>
-                            <textarea id="calc-text" rows="8" placeholder="Вставьте текст контракта..." 
+                            <textarea id="calc-text" rows="8" placeholder="Вставьте text контракта..." 
                                       class="w-full bg-[#100b0b] border border-red-950 rounded-lg p-3 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-red-500 resize-none"
                                       oninput="calculateContract()"></textarea>
                         </div>
                         
-                        <div class="flex items-center space-x-2 py-1">
-                            <input type="checkbox" id="calc-exclude-prefix" onchange="calculateContract()" 
-                                   class="w-4 h-4 bg-[#100b0b] border border-red-950 rounded text-red-600 focus:ring-0 focus:ring-offset-0 cursor-pointer">
-                            <label for="calc-exclude-prefix" class="text-sm text-gray-300 select-none cursor-pointer hover:text-white transition">
-                                Исключать префикс /wnews [Реклама] (16 симв.)
-                            </label>
-                        </div>
-                        
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
                             <div>
                                 <label class="block text-xs uppercase text-gray-400 mb-2">Тип объявления</label>
-                                <div class="grid grid-cols-2 gap-2">
-                                    <button onclick="setContractType('green')" id="btn-type-green" class="py-2 px-4 rounded-lg border border-red-900/60 font-semibold text-sm bg-red-950/40 text-red-400">
+                                <div class="grid grid-cols-1 gap-2">
+                                    <button onclick="setContractType('green')" id="btn-type-green" class="py-2 px-3 rounded-lg border border-red-900/60 font-semibold text-xs bg-red-950/40 text-red-400 transition">
                                         Зеленый (400$)
                                     </button>
-                                    <button onclick="setContractType('sms')" id="btn-type-sms" class="py-2 px-4 rounded-lg border border-gray-800 font-semibold text-sm text-gray-400">
+                                    <button onclick="setContractType('sms')" id="btn-type-sms" class="py-2 px-3 rounded-lg border border-gray-800 font-semibold text-xs text-gray-400 transition">
                                         SMS (200$)
                                     </button>
                                 </div>
                             </div>
                             <div>
+                                <label class="block text-xs uppercase text-gray-400 mb-2">Сообщений в день</label>
+                                <div class="flex items-center h-[42px] bg-[#100b0b] border border-red-950 rounded-lg overflow-hidden">
+                                    <button onclick="adjustCount('calc-msg-per-day', -1)" class="w-10 h-full text-gray-400 hover:text-white font-bold text-base">-</button>
+                                    <input type="number" id="calc-msg-per-day" value="1" min="1" oninput="calculateContract()" class="flex-grow bg-transparent text-center text-sm font-bold text-white focus:outline-none">
+                                    <button onclick="adjustCount('calc-msg-per-day', 1)" class="w-10 h-full text-gray-400 hover:text-white font-bold text-base">+</button>
+                                </div>
+                            </div>
+                            <div>
                                 <label class="block text-xs uppercase text-gray-400 mb-2">Количество дней</label>
                                 <div class="flex items-center h-[42px] bg-[#100b0b] border border-red-950 rounded-lg overflow-hidden">
-                                    <button onclick="adjustDays(-1)" class="w-12 h-full text-gray-400 hover:text-white font-bold text-lg">-</button>
+                                    <button onclick="adjustCount('calc-days', -1)" class="w-10 h-full text-gray-400 hover:text-white font-bold text-base">-</button>
                                     <input type="number" id="calc-days" value="7" min="1" oninput="calculateContract()" class="flex-grow bg-transparent text-center text-sm font-bold text-white focus:outline-none">
-                                    <button onclick="adjustDays(1)" class="w-12 h-full text-gray-400 hover:text-white font-bold text-lg">+</button>
+                                    <button onclick="adjustCount('calc-days', 1)" class="w-10 h-full text-gray-400 hover:text-white font-bold text-base">+</button>
                                 </div>
                             </div>
                         </div>
@@ -299,7 +299,7 @@ def dashboard():
                             <h2 class="text-lg font-bold text-white">Результаты расчета</h2>
                             <div class="bg-[#100b0b] p-3 rounded-lg border border-red-950 text-xs space-y-1 text-gray-400">
                                 <div class="flex justify-between"><span>Всего символов:</span><span id="res-total-chars" class="text-white">0</span></div>
-                                <div class="flex justify-between"><span>За 1 день:</span><span id="res-one-day-sum" class="text-white">0 $</span></div>
+                                <div class="flex justify-between"><span>За 1 выход:</span><span id="res-one-day-sum" class="text-white">0 $</span></div>
                             </div>
                             <div class="space-y-2">
                                 <div class="bg-red-950/20 border border-red-900/40 p-3 rounded-lg">
@@ -383,17 +383,15 @@ def dashboard():
             function openControlModal() { document.getElementById('control-modal').classList.remove('hidden'); }
             function closeControlModal() { document.getElementById('control-modal').classList.add('hidden'); }
 
-            fn=function(){};
-
             function setContractType(type) {
                 contractRate = (type === 'green') ? 400 : 200;
-                document.getElementById('btn-type-green').className = type === 'green' ? "py-2 px-4 rounded-lg border border-red-900/60 font-semibold text-sm bg-red-950/40 text-red-400" : "py-2 px-4 rounded-lg border border-gray-800 font-semibold text-sm text-gray-400";
-                document.getElementById('btn-type-sms').className = type === 'sms' ? "py-2 px-4 rounded-lg border border-red-900/60 font-semibold text-sm bg-red-950/40 text-red-400" : "py-2 px-4 rounded-lg border border-gray-800 font-semibold text-sm text-gray-400";
+                document.getElementById('btn-type-green').className = type === 'green' ? "py-2 px-3 rounded-lg border border-red-900/60 font-semibold text-xs bg-red-950/40 text-red-400" : "py-2 px-3 rounded-lg border border-gray-800 font-semibold text-xs text-gray-400";
+                document.getElementById('btn-type-sms').className = type === 'sms' ? "py-2 px-3 rounded-lg border border-red-900/60 font-semibold text-xs bg-red-950/40 text-red-400" : "py-2 px-3 rounded-lg border border-gray-800 font-semibold text-xs text-gray-400";
                 calculateContract();
             }
 
-            function adjustDays(amount) {
-                const input = document.getElementById('calc-days');
+            function adjustCount(inputId, amount) {
+                const input = document.getElementById(inputId);
                 let val = (parseInt(input.value) || 1) + amount;
                 input.value = val < 1 ? 1 : val;
                 calculateContract();
@@ -401,30 +399,18 @@ def dashboard():
 
             function calculateContract() {
                 const text = document.getElementById('calc-text').value;
+                const msgPerDay = parseInt(document.getElementById('calc-msg-per-day').value) || 1;
                 const days = parseInt(document.getElementById('calc-days').value) || 1;
-                const excludePrefix = document.getElementById('calc-exclude-prefix').checked;
 
                 let calcLength = text.length;
-                
-                // Если стоит чекбокс и текст начинается с префикса или просто содержит его - вычитаем 16 символов
-                if (excludePrefix && calcLength > 0) {
-                    if (text.includes('/wnews [Реклама]')) {
-                        calcLength = Math.max(0, calcLength - 16);
-                    } else if (calcLength >= 16) {
-                        // На всякий случай, если префикс стерт, но галочка стоит
-                        calcLength = calcLength - 16;
-                    } else {
-                        calcLength = 0;
-                    }
-                }
 
-                const oneDaySum = calcLength * contractRate;
-                const totalSum = oneDaySum * days;
+                const oneMsgSum = calcLength * contractRate;
+                const totalSum = oneMsgSum * msgPerDay * days;
                 const treasurySum = totalSum * 0.75;
                 const employeeSum = totalSum * 0.25;
 
                 document.getElementById('res-total-chars').innerText = calcLength;
-                document.getElementById('res-one-day-sum').innerText = oneDaySum.toLocaleString() + ' $';
+                document.getElementById('res-one-day-sum').innerText = oneMsgSum.toLocaleString() + ' $';
                 document.getElementById('res-total-sum').innerText = totalSum.toLocaleString() + ' $';
                 document.getElementById('res-treasury-sum').innerText = treasurySum.toLocaleString() + ' $';
                 document.getElementById('res-employee-sum').innerText = employeeSum.toLocaleString() + ' $';
@@ -471,13 +457,12 @@ def dashboard():
                             let rowClass = "hover:bg-red-950/5";
                             
                             if (c.date_status === 'last_day') {
-                                statusBadge = '<span class="inline-block bg-amber-950/60 text-amber-400 border border-amber-900/60 text-[10px] font-bold px-2.5 py-1 rounded whitespace-nowrap animate-pulse">Последний день</span>';
+                                statusBadge = '<span class="inline-block bg-amber-950/60 text-amber-400 border border-amber-900/60 text-[10px] font-bold px-2.5 py-1 rounded whitespace-nowrap">Последний день</span>';
                             } else if (c.date_status === 'expired') {
                                 statusBadge = '<span class="inline-block bg-red-950/60 text-red-400 border border-red-900/60 text-[10px] font-bold px-2.5 py-1 rounded whitespace-nowrap">Просрочен</span>';
                                 rowClass = "opacity-40 hover:bg-red-950/5";
                             }
 
-                            // Компактная генерация плашек времени
                             let timeBadges = c.times.map(t => `<span class="inline-block bg-[#261616] text-red-400 border border-red-950 text-xs px-2 py-0.5 rounded font-mono shadow-sm">${t}</span>`).join(' ');
 
                             return `
@@ -485,7 +470,7 @@ def dashboard():
                                     <td class="py-3 px-4"><div class="flex flex-wrap gap-1.5 max-w-[210px]">${timeBadges}</div></td>
                                     <td class="py-3 px-4 text-gray-300 break-words max-w-xs md:max-w-xl">${c.text}</td>
                                     <td class="py-3 px-4 text-gray-400 whitespace-nowrap">${c.date_range}</td>
-                                    <td class="py-3 px-4 text-center">${statusBadge}</td>
+                                    <td class="py-3 px-4 text-center whitespace-nowrap">${statusBadge}</td>
                                 </tr>
                             `;
                         }).join('');
