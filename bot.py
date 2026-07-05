@@ -1,636 +1,544 @@
 import os
-import datetime
-import requests
+import re
 import csv
-from flask import Flask, jsonify, render_template_string, redirect, url_for, session, request
+import json
+import asyncio
+import logging
+from datetime import datetime, timedelta
 import threading
-import time
-import warnings
-
-# Отключаем предупреждения о парсинге дат, чтобы логи на Render были чистыми
-warnings.filterwarnings("ignore", category=UserWarning, module="datetime")
+import requests
+from flask import Flask, render_template_string, jsonify, request, session, redirect
 
 # ================= НАСТРОЙКИ БОТА =================
 ROLE_ID = "1447219553259094219"
 SHEET_ID = "1B8Ts_DHQ11878tw1Qa8mUdjxFdCb249v78R10n9czBw"
+CSV_FILE_PATH = "База данных  - Лист1.csv"
 # ==================================================
 
-# Пароль для доступа к панели (берется из настроек Render, по умолчанию "1234")
-ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'WN063')
-WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# Глобальные переменные статуса и КЭШ таблицы
-start_time = datetime.datetime.utcnow()
-is_bot_enabled = True  # Флаг паузы
-skipped_times = set()  # Множество пропущенных временных меток (например, {"18:45"})
+# Инициализация Flask
+app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "super-secret-key-12345")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")  # Пароль для панели управления
 
-SHEET_ROWS_CACHE = {
-    "data": [],
-    "last_fetched": 0
+# Глобальные переменные состояния
+system_state = {
+    "is_paused": False,
+    "skipped_contracts": []  # Список пропущенных временных слотов (например, "12:55_29.06-05.07")
 }
-CACHE_TIMEOUT = 10  # Время жизни кэша в секундах
 
-def fetch_sheet_rows():
-    global SHEET_ROWS_CACHE
-    now = time.time()
-    if now - SHEET_ROWS_CACHE["last_fetched"] > CACHE_TIMEOUT or not SHEET_ROWS_CACHE["data"]:
-        url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
-        print(f"[LOG] Запрос свежих данных из Google Таблицы...")
-        try:
-            response = requests.get(url, timeout=5)
-            if response.status_code == 200:
-                response.encoding = 'utf-8'
-                lines = response.text.splitlines()
-                reader = csv.reader(lines)
-                parsed_rows = list(reader)
-                
-                # Убираем пустые строки на выходе
-                filtered_rows = [r for r in parsed_rows if len(r) >= 2 and r[0].strip()]
-                
-                SHEET_ROWS_CACHE["data"] = filtered_rows
-                SHEET_ROWS_CACHE["last_fetched"] = now
-                print(f"[LOG] Успешно загружено строк из таблицы: {len(filtered_rows)}")
-            else:
-                print(f"[ERROR] Ошибка Google Sheets. Статус: {response.status_code}")
-        except Exception as e:
-            print(f"[ERROR] Исключение при запросе к таблице: {e}")
-    return SHEET_ROWS_CACHE["data"]
+WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 
-def parse_time(time_str):
-    try:
-        time_str = time_str.strip().lower()
-        if not time_str or ":" not in time_str:
-            return None
-            
-        parts = time_str.split(':')
-        if len(parts[0]) == 1:
-            parts[0] = "0" + parts[0]
-            
-        return f"{parts[0][:2]}:{parts[1][:2]}"
-    except:
-        return None
+def format_money(value):
+    """Красиво форматирует числа в денежный формат, например: 1 250 000 $"""
+    return f"{value:,.0f} $".replace(",", " ")
 
-def check_is_last_day(expiry_str):
-    if not expiry_str or expiry_str.strip() == "": 
-        return False
-    expiry_str = expiry_str.strip().replace("`", "").replace("'", "")
-    if "срок" in expiry_str.lower() or "годн" in expiry_str.lower(): 
-        return False
-    try:
-        now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
-        current_date = now.date()
-        
-        # Парсим диапазоны дат вроде "29.06-05.07" или "29.06 - 06.07"
-        if "-" in expiry_str:
-            parts = expiry_str.split("-")
-            expiry_str = parts[1].strip()
-            
-        for fmt in ('%d.%m.%Y', '%Y-%m-%d', '%d.%m.%y', '%d/%m/%Y', '%d.%m'):
-            try:
-                if fmt == '%d.%m':
-                    p_days, p_months = map(int, expiry_str.split('.'))
-                    expiry_date = datetime.date(current_date.year, p_months, p_days)
-                else:
-                    expiry_date = datetime.datetime.strptime(expiry_str, fmt).date()
-                    
-                if expiry_date == current_date: 
-                    return True
-            except: 
-                continue
-    except Exception as e:
-        print(f"[ERROR] Ошибка парсинга даты '{expiry_str}': {e}")
-    return False
+def get_msk_time():
+    """Возвращает текущее время по МСК (UTC+3)"""
+    return datetime.utcnow() + timedelta(hours=3)
 
-def format_webhook_message(text_part, expiry_str):
-    text_part = text_part.strip()
-    if not text_part: 
-        return None
-        
-    if ROLE_ID and ROLE_ID.isdigit():
-        final_msg = f"<@&{ROLE_ID}>\n{text_part}"
-    else:
-        final_msg = text_part
-        
-    if check_is_last_day(expiry_str):
-        final_msg += "\nсрок контракта истекает завтра"
-        
-    return final_msg
-
-def get_text_by_time(target_time):
-    rows = fetch_sheet_rows()
-    for row in rows:
-        if len(row) >= 2:
-            time_part = row[0].strip()
-            if not time_part: 
-                continue
-            times_list = time_part.split()
-            for single_time in times_list:
-                sheet_time = parse_time(single_time)
-                if sheet_time == target_time:
-                    text_part = row[1].strip()
-                    expiry_part = row[2].strip() if len(row) >= 3 else ""
-                    return format_webhook_message(text_part, expiry_part)
-    return None
-
-def get_all_contracts_from_sheet():
-    rows = fetch_sheet_rows()
+def parse_database():
+    """Парсит CSV-файл и возвращает список всех активных контрактов"""
     contracts = []
-    for index, row in enumerate(rows):
-        try:
-            if len(row) < 2: 
-                continue
-                
-            time_part = row[0].strip()
-            text_part = row[1].strip()
-            
-            if not time_part or not text_part:
-                continue
-                
-            if "время" in time_part.lower() or "текст" in text_part.lower():
-                continue
-                
-            expiry_part = row[2].strip() if len(row) >= 3 else ""
-            if "срок" in expiry_part.lower() or "годн" in expiry_part.lower():
-                expiry_part = ""
+    if not os.path.exists(CSV_FILE_PATH):
+        logger.error(f"Файл {CSV_FILE_PATH} не найден!")
+        return contracts
 
-            is_last = check_is_last_day(expiry_part)
-            
-            contracts.append({
-                "time": time_part,
-                "text": text_part,
-                "expiry": expiry_part if expiry_part else "Не указан",
-                "is_last_day": is_last
-            })
-        except Exception as e:
-            print(f"[ERROR] Ошибка обработки строки {index}: {e}")
-            
+    try:
+        with open(CSV_FILE_PATH, mode='r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if len(row) < 3:
+                    continue
+                times_str, text, date_range = row[0], row[1], row[2]
+                
+                # Очистка текста от лишних кавычек
+                clean_text = text.strip().strip('"').strip('`').strip()
+                times = [t.strip() for t in times_str.split() if t.strip()]
+                
+                contracts.append({
+                    "times": times,
+                    "text": clean_text,
+                    "date_range": date_range.strip()
+                })
+    except Exception as e:
+        logger.error(f"Ошибка при чтении CSV: {e}")
+    
     return contracts
 
-def get_next_execution_time():
-    rows = fetch_sheet_rows()
-    now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
-    current_minutes = now.hour * 60 + now.minute
-    min_diff = 9999
-    next_time_str = None
-
-    for row in rows:
-        if len(row) >= 2:
-            time_part = row[0].strip()
-            if not time_part:
-                continue
-            times_list = time_part.split()
-            for single_time in times_list:
-                sheet_time = parse_time(single_time)
-                if not sheet_time or ":" not in sheet_time:
+def get_next_contract_info():
+    """Определяет следующий по расписанию контракт"""
+    now = get_msk_time()
+    contracts = parse_database()
+    upcoming_contracts = []
+    
+    for contract in contracts:
+        try:
+            dates = contract["date_range"].split('-')
+            if len(dates) == 2:
+                start_str, end_str = dates[0].strip(), dates[1].strip()
+                current_year = now.year
+                
+                start_date = datetime.strptime(f"{start_str}.{current_year}", "%d.%m.%Y")
+                end_date = datetime.strptime(f"{end_str}.{current_year}", "%d.%m.%Y") + timedelta(days=1)
+                
+                if not (start_date <= now <= end_date):
                     continue
-                try:
-                    t_hours, t_mins = map(int, sheet_time.split(':'))
-                    sheet_minutes = t_hours * 60 + t_mins
-
-                    diff = sheet_minutes - current_minutes
-                    if diff <= 0:
-                        diff += 1440
-
-                    if diff < min_diff:
-                        min_diff = diff
-                        next_time_str = sheet_time
-                except:
-                    continue
-    return next_time_str
-
-def get_next_message_info():
-    if not is_bot_enabled:
-        return "Рассылка на паузе", "--", "", False
-
-    rows = fetch_sheet_rows()
-
-    now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
-    current_minutes = now.hour * 60 + now.minute
-
-    next_text = "Нет запланированных сообщений"
-    time_left_str = "--"
-    contract_expiry = ""
-    is_last = False
-    min_diff = 9999
-
-    for row in rows:
-        if len(row) >= 2:
-            time_part = row[0].strip()
-            if not time_part:
-                continue
-            times_list = time_part.split()
-            for single_time in times_list:
-                sheet_time = parse_time(single_time)
-                if not sheet_time or ":" not in sheet_time:
-                    continue
-
-                try:
-                    t_hours, t_mins = map(int, sheet_time.split(':'))
-                    sheet_minutes = t_hours * 60 + t_mins
-
-                    diff = sheet_minutes - current_minutes
-                    if diff <= 0:
-                        diff += 1440
-
-                    if diff < min_diff:
-                        min_diff = diff
-                        next_text = row[1].strip()
-                        contract_expiry = row[2].strip() if len(row) >= 3 and "срок" not in row[2].lower() else ""
-                        is_last = check_is_last_day(contract_expiry)
-                except:
-                    continue
-
-    if min_diff != 9999:
-        if min_diff >= 60:
-            time_left_str = f"{min_diff // 60} ч. {min_diff % 60} мин."
-        else:
-            time_left_str = f"{min_diff} мин."
-
-    return next_text, time_left_str, contract_expiry, is_last
-
-def send_to_webhook(final_text):
-    if not WEBHOOK_URL:
-        print("[ERROR] DISCORD_WEBHOOK_URL не настроен!")
-        return
-    payload = {"content": final_text}
-    try:
-        res = requests.post(WEBHOOK_URL, json=payload)
-        if res.status_code in [200, 204]:
-            print("[LOG] Сообщение успешно отправлено через Вебхук!")
-        else:
-            print(f"[ERROR] Ошибка вебхука: {res.status_code}")
-    except Exception as e:
-        print(f"[ERROR] Не удалось отправить вебхук: {e}")
-
-def cron_loop():
-    global skipped_times
-    print("[LOG] Фоновый таймер вебхука запущен.")
-    while True:
-        if is_bot_enabled:
-            now = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
-            current_time = now.strftime("%H:%M")
+        except Exception:
+            pass
             
-            # Проверяем, пропущен ли контракт на текущее время
-            if current_time in skipped_times:
-                print(f"[LOG] Рассылка на время {current_time} была принудительно пропущена пользователем.")
-                skipped_times.remove(current_time)  # Убираем из пропущенных, чтобы сработало завтра
-            else:
-                formatted_text = get_text_by_time(current_time)
-                if formatted_text:
-                    send_to_webhook(formatted_text)
-        time.sleep(60)
+        for t_str in contract["times"]:
+            try:
+                t_time = datetime.strptime(t_str, "%H:%M").time()
+                t_datetime = datetime.combine(now.date(), t_time)
+                
+                if t_datetime < now:
+                    t_datetime += timedelta(days=1)
+                
+                skip_key = f"{t_str}_{contract['date_range']}"
+                is_skipped = skip_key in system_state["skipped_contracts"]
+                
+                upcoming_contracts.append({
+                    "datetime": t_datetime,
+                    "time_str": t_str,
+                    "text": contract["text"],
+                    "date_range": contract["date_range"],
+                    "is_skipped": is_skipped,
+                    "skip_key": skip_key
+                })
+            except Exception as e:
+                logger.error(f"Ошибка парсинга времени {t_str}: {e}")
 
-app = Flask('')
-app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'super-secret-key-for-session-signing-98765')
+    if not upcoming_contracts:
+        return None
 
-HTML_PAGE = """
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-   <meta charset="UTF-8">
-   <title>Мониторинг Контрактов (Вебхук)</title>
-   <style>
-       body { font-family: sans-serif; background: #121214; color: #e1e1e6; padding: 40px; text-align: center; margin: 0; }
-       .container { background: #202024; padding: 25px; border-radius: 8px; display: inline-block; text-align: left; min-width: 700px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); position: relative; }
-       
-       /* Top Bar styling */
-       .header-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #29292e; padding-bottom: 15px; }
-       h1 { margin: 0; color: #04d361; font-size: 24px; }
-       h2 { font-size: 20px; color: #8257e5; margin-top: 25px; margin-bottom: 15px; }
-       
-       .param { margin: 12px 0; font-size: 16px; }
-       .value { color: #8257e5; font-weight: bold; }
-       .status-on { color: #04d361; font-weight: bold; }
-       .status-off { color: #f75a68; font-weight: bold; }
-       
-       .next-box { background: #181825; padding: 15px; border-radius: 6px; margin-top: 15px; margin-bottom: 15px; border-left: 4px solid #89b4fa; relative; }
-       .next-title { font-size: 14px; color: #a6adc8; margin-bottom: 5px; }
-       
-       .skipped-badge { background: #f75a68; color: white; padding: 3px 6px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-left: 10px; text-transform: uppercase; display: inline-block; }
+    upcoming_contracts.sort(key=lambda x: x["datetime"])
+    return upcoming_contracts[0]
 
-       /* Buttons styling */
-       .btn { background: #8257e5; color: white; border: none; padding: 10px 18px; border-radius: 5px; font-weight: bold; cursor: pointer; font-size: 14px; transition: 0.2s; display: inline-flex; align-items: center; gap: 8px; }
-       .btn:hover { background: #9466ff; }
-       .btn-secondary { background: #29292e; color: #a8a8b3; }
-       .btn-secondary:hover { background: #323238; color: #e1e1e6; }
-       .btn-pause { background: #f75a68; }
-       .btn-pause:hover { background: #ff6b7b; }
-       .btn-skip { background: #f9e2af; color: #11111b; }
-       .btn-skip:hover { background: #fae0b0; }
-       .btn-link { background: #3174f1; }
-       .btn-link:hover { background: #4b86f4; text-decoration: none; }
-
-       /* Custom Web UI Modals styling */
-       .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; opacity: 0; pointer-events: none; transition: 0.2s; }
-       .modal-overlay.show { opacity: 1; pointer-events: auto; }
-       .modal-box { background: #202024; padding: 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.6); width: 100%; max-width: 400px; text-align: center; border: 1px solid #29292e; }
-       .modal-box h3 { color: #04d361; margin-top: 0; margin-bottom: 15px; }
-       .modal-box input { width: 100%; padding: 12px; background: #121214; border: 1px solid #29292e; border-radius: 5px; color: white; font-size: 16px; box-sizing: border-box; margin-bottom: 20px; outline: none; }
-       .modal-box input:focus { border-color: #04d361; }
-       .modal-buttons { display: flex; flex-direction: column; gap: 12px; margin-top: 15px; }
-       
-       table { width: 100%; border-collapse: collapse; margin-top: 15px; background: #181825; border-radius: 6px; overflow: hidden; }
-       th, td { padding: 12px; text-align: left; border-bottom: 1px solid #29292e; font-size: 14px; }
-       th { background-color: #29292e; color: #04d361; font-weight: bold; }
-       .td-time { color: #a6e3a1; font-weight: bold; white-space: nowrap; }
-       .td-expiry { color: #f9e2af; font-weight: bold; white-space: nowrap; }
-       .alert-expiry { color: #f75a68; font-weight: bold; font-size: 11px; display: block; margin-top: 4px; background: rgba(247,90,104,0.1); padding: 2px 6px; border-radius: 4px; text-align: center; }
-       pre { white-space: pre-wrap; word-break: break-all; margin: 0; font-family: monospace; color: #e1e1e6; }
-   </style>
-</head>
-<body>
-   <div class="container">
-       
-       <!-- Top bar containing Auth and Control Panel buttons -->
-       <div class="header-bar">
-           <div>
-               <button id="ctrl_panel_btn" class="btn" style="display: none;" onclick="toggleModal('admin_modal', true)">⚙️ Панель управления</button>
-           </div>
-           <h1>Мониторинг Контрактов</h1>
-           <div>
-               <button id="auth_btn" class="btn btn-secondary" onclick="openAuthAction()">Войти</button>
-           </div>
-       </div>
-
-       <div class="param">Статус системы: <span id="status">Загрузка...</span></div>
-       <div class="param">Время сервера (КВ/МСК): <span id="time" class="value">00:00:00</span></div>
-
-       <div class="next-box">
-           <div class="next-title">СЛЕДУЮЩИЙ КОНТРАКТ: <span id="next_skipped_badge" class="skipped-badge" style="display: none;">ПРОПУЩЕН</span></div>
-           <div id="next_text" style="font-weight: bold; color: #f5c2e7; white-space: pre-wrap;">Загрузка...</div>
-           <div style="margin-top: 5px; font-size: 14px;">Отправка через: <span id="next_time" style="color: #a6e3a1; font-weight: bold;">--</span></div>
-           <div style="margin-top: 5px; font-size: 14px;">Срок контракта: <span id="contract_expiry" style="color: #f9e2af;">--</span> <span id="next_alert" style="color: #f75a68; font-weight: bold;"></span></div>
-       </div>
-
-       <h2>📋 Все активные контракты</h2>
-       <table>
-           <thead>
-               <tr>
-                   <th style="width: 20%;">Время</th>
-                   <th style="width: 60%;">Текст контракта</th>
-                   <th style="width: 20%;">Срок действия</th>
-               </tr>
-           </thead>
-           <tbody id="contracts_table_body">
-               <tr><td colspan="3" style="text-align: center;">Загрузка списка...</td></tr>
-           </tbody>
-       </table>
-   </div>
-
-   <!-- Auth Modal overlay -->
-   <div id="auth_modal" class="modal-overlay">
-       <div class="modal-box">
-           <h3>Авторизация</h3>
-           <p style="color: #a8a8b3; font-size: 14px; margin-bottom: 20px;">Введите секретный пароль администратора</p>
-           <div id="auth_error" style="color: #f75a68; font-weight: bold; margin-bottom: 12px; display: none;">Неверный пароль</div>
-           <input type="password" id="admin_password_input" placeholder="Пароль" required>
-           <div style="display: flex; gap: 10px;">
-               <button class="btn" style="flex: 1; justify-content: center;" onclick="submitAuth()">Войти</button>
-               <button class="btn btn-secondary" style="flex: 1; justify-content: center;" onclick="toggleModal('auth_modal', false)">Отмена</button>
-           </div>
-       </div>
-   </div>
-
-   <!-- Admin Control Panel Modal overlay -->
-   <div id="admin_modal" class="modal-overlay">
-       <div class="modal-box" style="max-width: 440px;">
-           <h3>Панель управления</h3>
-           <p style="color: #a8a8b3; font-size: 14px; margin-bottom: 20px;">Выберите необходимое административное действие</p>
-           
-           <div class="modal-buttons">
-               <button id="modal_pause_btn" class="btn" style="justify-content: center; padding: 12px;" onclick="triggerPause()"></button>
-               <button id="modal_skip_btn" class="btn btn-skip" style="justify-content: center; padding: 12px;" onclick="triggerSkip()"></button>
-               <a href="https://docs.google.com/spreadsheets/d/1B8Ts_DHQ11878tw1Qa8mUdjxFdCb249v78R10n9czBw/edit?gid=0#gid=0" target="_blank" class="btn btn-link" style="justify-content: center; padding: 12px; text-decoration: none;">📋 Открыть Google Таблицу</a>
-               <button class="btn btn-secondary" style="justify-content: center; padding: 12px; margin-top: 10px;" onclick="toggleModal('admin_modal', false)">Закрыть панель</button>
-           </div>
-       </div>
-   </div>
-
-   <script>
-       let isAuthorized = false;
-       let nextIsSkipped = false;
-
-       function toggleModal(id, show) {
-           const modal = document.getElementById(id);
-           if (show) {
-               modal.classList.add('show');
-               if (id === 'auth_modal') {
-                   document.getElementById('admin_password_input').focus();
-                   document.getElementById('auth_error').style.display = 'none';
-                   document.getElementById('admin_password_input').value = '';
-               }
-           } else {
-               modal.classList.remove('show');
-           }
-       }
-
-       async function openAuthAction() {
-           if (isAuthorized) {
-               // Logout action
-               try {
-                   await fetch('/api/logout', { method: 'POST' });
-                   isAuthorized = false;
-                   updateStats();
-               } catch (e) { console.error(e); }
-           } else {
-               toggleModal('auth_modal', true);
-           }
-       }
-
-       async function submitAuth() {
-           const password = document.getElementById('admin_password_input').value;
-           const errorBlock = document.getElementById('auth_error');
-           try {
-               const res = await fetch('/api/login', {
-                   method: 'POST',
-                   headers: { 'Content-Type': 'application/json' },
-                   body: JSON.stringify({ password })
-               });
-               if (res.ok) {
-                   isAuthorized = true;
-                   toggleModal('auth_modal', false);
-                   updateStats();
-               } else {
-                   errorBlock.style.display = 'block';
-               }
-           } catch(e) {
-               errorBlock.innerText = 'Ошибка подключения к серверу';
-               errorBlock.style.display = 'block';
-           }
-       }
-
-       async function triggerPause() {
-           try {
-               await fetch('/api/toggle', { method: 'POST' });
-               updateStats();
-           } catch(e) { console.error(e); }
-       }
-
-       async function triggerSkip() {
-           try {
-               await fetch('/api/skip_next', { method: 'POST' });
-               updateStats();
-           } catch(e) { console.error(e); }
-       }
-
-       async function updateStats() {
-           try {
-               let res = await fetch('/api/stats');
-               let data = await res.json();
-               
-               isAuthorized = data.is_authorized;
-               nextIsSkipped = data.is_next_skipped;
-               
-               // Render Auth Buttons
-               const authBtn = document.getElementById('auth_btn');
-               const ctrlBtn = document.getElementById('ctrl_panel_btn');
-               if (isAuthorized) {
-                   authBtn.innerText = 'Выйти';
-                   authBtn.className = 'btn btn-secondary';
-                   ctrlBtn.style.display = 'inline-flex';
-               } else {
-                   authBtn.innerText = 'Войти';
-                   authBtn.className = 'btn';
-                   ctrlBtn.style.display = 'none';
-               }
-
-               // System status styling
-               let statusElem = document.getElementById('status');
-               let modalPauseBtn = document.getElementById('modal_pause_btn');
-               
-               if (data.is_enabled) {
-                   statusElem.innerText = "РАБОТАЕТ ЧЕРЕЗ ВЕБХУК";
-                   statusElem.className = "status-on";
-                   modalPauseBtn.innerText = "⏸ Поставить рассылку на паузу";
-                   modalPauseBtn.className = "btn btn-pause";
-               } else {
-                   statusElem.innerText = "НА ПАУЗЕ";
-                   statusElem.className = "status-off";
-                   modalPauseBtn.innerText = "▶️ Запустить рассылку";
-                   modalPauseBtn.className = "btn";
-               }
-
-               // Next skipped button dynamic labeling
-               const modalSkipBtn = document.getElementById('modal_skip_btn');
-               if (nextIsSkipped) {
-                   modalSkipBtn.innerText = "🔄 Отменить пропуск контракта";
-                   document.getElementById('next_skipped_badge').style.display = 'inline-block';
-               } else {
-                   modalSkipBtn.innerText = "⏭ Пропустить следующий контракт";
-                   document.getElementById('next_skipped_badge').style.display = 'none';
-               }
-
-               document.getElementById('next_text').innerText = data.next_msg;
-               document.getElementById('next_time').innerText = data.next_time_left;
-               document.getElementById('contract_expiry').innerText = data.contract_expiry || "Не указан";
-               document.getElementById('next_alert').innerText = data.next_is_last ? "⚠️ ПОСЛЕДНИЙ ДЕНЬ!" : "";
-
-               // Contracts Table renderer
-               let tableBody = document.getElementById('contracts_table_body');
-               tableBody.innerHTML = "";
-               if (data.all_contracts && data.all_contracts.length > 0) {
-                   data.all_contracts.forEach(c => {
-                       let row = document.createElement('tr');
-                       let warn = c.is_last_day ? '<span class="alert-expiry">⚠️ ПОСЛЕДНИЙ ДЕНЬ</span>' : '';
-                       let isSkippedBadge = c.is_skipped ? ' <span class="skipped-badge" style="font-size: 10px; padding: 1px 4px; vertical-align: middle;">ПРОПУЩЕН</span>' : '';
-                       row.innerHTML = `
-                           <td class="td-time">${c.time}${isSkippedBadge}</td>
-                           <td><pre>${c.text}</pre></td>
-                           <td class="td-expiry">${c.expiry}${warn}</td>
-                       `;
-                       tableBody.appendChild(row);
-                   });
-               } else {
-                   tableBody.innerHTML = `<tr><td colspan="3" style="text-align: center;">Таблица пуста</td></tr>`;
-               }
-           } catch(e) { }
-       }
-
-       // Time sync ticks
-       setInterval(() => {
-           let now = new Date();
-           let utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-           let targetTime = new Date(utc + (3600000 * 3));
-           document.getElementById('time').innerText = targetTime.toTimeString().split(' ')[0];
-       }, 1000);
-
-       setInterval(updateStats, 4000);
-       updateStats();
-   </script>
-</body>
-</html>
-"""
+# --- FLASK ROUTES ---
 
 @app.route('/')
-def index():
-    return render_template_string(HTML_PAGE)
+def dashboard():
+    html_template = """
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Управление Рассылкой & Калькулятор</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+        <style>
+            body { background-color: #0f0a0a; color: #e5e5e5; font-family: sans-serif; }
+            .glow-card { box-shadow: 0 4px 20px rgba(220, 38, 38, 0.15); border: 1px solid rgba(220, 38, 38, 0.2); }
+            .tab-active { border-bottom: 2px solid #ef4444; color: #ef4444; }
+        </style>
+    </head>
+    <body class="min-h-screen flex flex-col pb-10">
 
-@app.route('/api/login', methods=['POST'])
-def api_login():
-    data = request.json or {}
-    password = data.get('password')
-    if password == ADMIN_PASSWORD:
-        session['is_authorized'] = True
-        return jsonify({"success": True})
-    return jsonify({"success": False, "error": "Неверный пароль"}), 401
+        <!-- Шапка -->
+        <header class="bg-[#1a1313] border-b border-red-900/40 p-4 sticky top-0 z-50 shadow-lg">
+            <div class="max-w-6xl mx-auto flex justify-between items-center">
+                <div class="flex items-center space-x-6">
+                    <h1 class="text-xl font-bold text-red-500 flex items-center space-x-2">
+                        <i class="fa-solid fa-file-invoice-dollar"></i>
+                        <span>Secretary Alice</span>
+                    </h1>
+                    
+                    <nav class="hidden md:flex space-x-4">
+                        <button onclick="switchTab('monitoring')" id="tab-monitoring" class="py-1 px-3 text-sm font-semibold transition tab-active">
+                            Мониторинг
+                        </button>
+                        <button onclick="switchTab('calculator')" id="tab-calculator" class="py-1 px-3 text-sm font-semibold text-gray-400 hover:text-white transition">
+                            Калькулятор
+                        </button>
+                    </nav>
 
-@app.route('/api/logout', methods=['POST'])
-def api_logout():
-    session.clear()
-    return jsonify({"success": True})
+                    {% if session.get('authorized') %}
+                    <button onclick="openControlModal()" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-1.5 px-4 rounded text-xs transition shadow flex items-center space-x-1.5">
+                        <i class="fa-solid fa-sliders"></i>
+                        <span>Панель управления</span>
+                    </button>
+                    {% endif %}
+                </div>
 
-@app.route('/api/toggle', methods=['POST'])
-def toggle_status():
-    if not session.get('is_authorized'):
-        return jsonify({"error": "Unauthorized"}), 401
-    global is_bot_enabled
-    is_bot_enabled = not is_bot_enabled
-    return jsonify({"success": True, "is_enabled": is_bot_enabled})
+                <div class="flex items-center space-x-4">
+                    {% if session.get('authorized') %}
+                    <span class="text-xs text-green-400 flex items-center space-x-1">
+                        <span class="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
+                        <span>Администратор</span>
+                    </span>
+                    <a href="/logout" class="text-xs text-gray-400 hover:text-red-400 transition">Выйти</a>
+                    {% else %}
+                    <button onclick="openLoginModal()" class="bg-[#2a1d1d] hover:bg-[#3d2a2a] border border-red-900/60 text-red-400 font-semibold py-1.5 px-4 rounded text-xs transition">
+                        Войти
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+        </header>
 
-@app.route('/api/skip_next', methods=['POST'])
-def skip_next():
-    if not session.get('is_authorized'):
-        return jsonify({"error": "Unauthorized"}), 401
-    global skipped_times
-    next_time = get_next_execution_time()
-    if next_time:
-        if next_time in skipped_times:
-            skipped_times.remove(next_time)
-            print(f"[LOG] Пропуск на время {next_time} отменен пользователем.")
-            return jsonify({"success": True, "action": "unskipped", "time": next_time})
-        else:
-            skipped_times.add(next_time)
-            print(f"[LOG] Добавлен пропуск для следующего контракта на время {next_time}.")
-            return jsonify({"success": True, "action": "skipped", "time": next_time})
-    return jsonify({"success": False, "error": "Нет запланированных контрактов для пропуска"})
+        <main class="max-w-6xl w-full mx-auto px-4 mt-8 flex-grow">
+            
+            <!-- ВКЛАДКА: МОНИТОРИНГ -->
+            <div id="section-monitoring" class="space-y-6">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="bg-[#181111] glow-card rounded-lg p-5 flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-400 text-xs uppercase">Статус системы</p>
+                            <p class="text-lg font-bold text-green-400">РАБОТАЕТ</p>
+                        </div>
+                    </div>
+                    <div class="bg-[#181111] glow-card rounded-lg p-5 flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-400 text-xs uppercase">Время МСК</p>
+                            <p id="server-time" class="text-lg font-bold text-red-400">...</p>
+                        </div>
+                    </div>
+                    <div class="bg-[#181111] glow-card rounded-lg p-5 flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-400 text-xs uppercase">Всего контрактов</p>
+                            <p id="total-contracts-count" class="text-lg font-bold text-white">...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-[#181111] glow-card rounded-lg p-6">
+                    <h2 class="text-xs uppercase font-bold text-gray-400 mb-3">Следующий контракт</h2>
+                    <div id="next-contract-container" class="space-y-4">
+                        <div class="text-center py-6 text-gray-500">Загрузка...</div>
+                    </div>
+                </div>
+
+                <div class="bg-[#181111] glow-card rounded-lg p-6">
+                    <h2 class="text-md font-bold text-white mb-4">Все active-контракты</h2>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="border-b border-red-900/40 text-gray-400 text-xs uppercase">
+                                    <th class="py-3 px-4">Время</th>
+                                    <th class="py-3 px-4">Текст контракта</th>
+                                    <th class="py-3 px-4">Срок действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="contracts-table-body" class="divide-y divide-red-900/20 text-sm">
+                                <tr><td colspan="3" class="text-center py-8 text-gray-500">Загрузка...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ВКЛАДКА: КАЛЬКУЛЯТОР -->
+            <div id="section-calculator" class="hidden space-y-6">
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div class="lg:col-span-2 bg-[#181111] glow-card rounded-lg p-6 space-y-4">
+                        <h2 class="text-lg font-bold text-white">Параметры контракта</h2>
+                        <div>
+                            <label class="block text-xs uppercase text-gray-400 mb-2">Текст</label>
+                            <textarea id="calc-text" rows="8" placeholder="Вставьте текст контракта..." 
+                                      class="w-full bg-[#100b0b] border border-red-950 rounded-lg p-3 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-red-500 resize-none"
+                                      oninput="calculateContract()"></textarea>
+                        </div>
+                        <div class="flex items-center">
+                            <input type="checkbox" id="calc-exclude-prefix" checked onchange="calculateContract()" class="rounded bg-[#100b0b] border-red-950 text-red-600 h-4 w-4">
+                            <label for="calc-exclude-prefix" class="ml-2 text-xs text-gray-400 cursor-pointer">
+                                Исключать префикс /wnews [Реклама] (16 симв.)
+                            </label>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs uppercase text-gray-400 mb-2">Тип объявления</label>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <button onclick="setContractType('green')" id="btn-type-green" class="py-2 px-4 rounded-lg border border-red-900/60 font-semibold text-sm bg-red-950/40 text-red-400">
+                                        Зеленый (400$)
+                                    </button>
+                                    <button onclick="setContractType('sms')" id="btn-type-sms" class="py-2 px-4 rounded-lg border border-gray-800 font-semibold text-sm text-gray-400">
+                                        SMS (200$)
+                                    </button>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-xs uppercase text-gray-400 mb-2">Количество дней</label>
+                                <div class="flex items-center h-[42px] bg-[#100b0b] border border-red-950 rounded-lg overflow-hidden">
+                                    <button onclick="adjustDays(-1)" class="w-12 h-full text-gray-400 hover:text-white font-bold text-lg">-</button>
+                                    <input type="number" id="calc-days" value="7" min="1" oninput="calculateContract()" class="flex-grow bg-transparent text-center text-sm font-bold text-white focus:outline-none">
+                                    <button onclick="adjustDays(1)" class="w-12 h-full text-gray-400 hover:text-white font-bold text-lg">+</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-[#181111] glow-card rounded-lg p-6 flex flex-col justify-between">
+                        <div class="space-y-4">
+                            <h2 class="text-lg font-bold text-white">Результаты расчета</h2>
+                            <div class="bg-[#100b0b] p-3 rounded-lg border border-red-950 text-xs space-y-1 text-gray-400">
+                                <div class="flex justify-between"><span>Всего символов:</span><span id="res-total-chars" class="text-white">0</span></div>
+                                <div class="flex justify-between"><span>Расчетных символов:</span><span id="res-calc-chars" class="text-red-400">0</span></div>
+                                <div class="flex justify-between"><span>За 1 день:</span><span id="res-one-day-sum" class="text-white">0 $</span></div>
+                            </div>
+                            <div class="space-y-2">
+                                <div class="bg-red-950/20 border border-red-900/40 p-3 rounded-lg">
+                                    <p class="text-gray-400 text-[10px] uppercase">Общая стоимость</p>
+                                    <p id="res-total-sum" class="text-2xl font-black text-red-500">0 $</p>
+                                </div>
+                                <div class="bg-blue-950/10 border border-blue-900/30 p-3 rounded-lg">
+                                    <p class="text-gray-400 text-[10px] uppercase flex justify-between"><span>В казну</span><span>75%</span></p>
+                                    <p id="res-treasury-sum" class="text-lg font-bold text-blue-400">0 $</p>
+                                </div>
+                                <div class="bg-emerald-950/10 border border-emerald-900/30 p-3 rounded-lg">
+                                    <p class="text-gray-400 text-[10px] uppercase flex justify-between"><span>Сотруднику</span><span>25%</span></p>
+                                    <p id="res-employee-sum" class="text-lg font-bold text-emerald-400">0 $</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Модалка входа -->
+        <div id="login-modal" class="hidden fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+            <div class="bg-[#181111] border border-red-900/60 rounded-xl max-w-sm w-full p-6 space-y-4">
+                <div class="flex justify-between items-center">
+                    <h3 class="text-white font-bold">Авторизация</h3>
+                    <button onclick="closeLoginModal()" class="text-gray-500 hover:text-white">&times;</button>
+                </div>
+                <form action="/login" method="POST" class="space-y-3">
+                    <input type="password" name="password" required placeholder="Пароль..." class="w-full bg-[#100b0b] border border-red-950 rounded p-2 text-sm text-white focus:outline-none">
+                    <button type="submit" class="w-full bg-red-600 text-white font-bold py-2 rounded text-sm">Войти</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Модалка Управления -->
+        <div id="control-modal" class="hidden fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+            <div class="bg-[#181111] border border-red-900/60 rounded-xl max-w-md w-full p-6 space-y-4">
+                <div class="flex justify-between items-center">
+                    <h3 class="text-white font-bold">Панель управления</h3>
+                    <button onclick="closeControlModal()" class="text-gray-500 hover:text-white">&times;</button>
+                </div>
+                <div class="space-y-3">
+                    <button id="ctrl-btn-pause" onclick="togglePause()" class="w-full text-white font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center shadow">
+                        <span>Пауза</span><span id="ctrl-pause-status">...</span>
+                    </button>
+                    <button onclick="toggleSkipNext()" class="w-full bg-[#241a1a] text-red-400 font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center">
+                        <span>Пропустить контракт</span>
+                    </button>
+                    <a href="https://docs.google.com/spreadsheets/d/{{ sheet_id }}/edit?gid=0#gid=0" target="_blank" class="w-full bg-[#1b221d] text-emerald-400 font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center">
+                        <span>Открыть таблицу</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            let currentTab = 'monitoring';
+            let contractRate = 400;
+
+            function switchTab(tabName) {
+                currentTab = tabName;
+                const tabMon = document.getElementById('tab-monitoring');
+                const tabCalc = document.getElementById('tab-calculator');
+                const secMon = document.getElementById('section-monitoring');
+                const secCalc = document.getElementById('section-calculator');
+
+                if (tabName === 'monitoring') {
+                    tabMon.className = "py-1 px-3 text-sm font-semibold transition tab-active";
+                    tabCalc.className = "py-1 px-3 text-sm font-semibold text-gray-400 hover:text-white transition";
+                    secMon.classList.remove('hidden');
+                    secCalc.classList.add('hidden');
+                } else {
+                    tabMon.className = "py-1 px-3 text-sm font-semibold text-gray-400 hover:text-white transition";
+                    tabCalc.className = "py-1 px-3 text-sm font-semibold transition tab-active";
+                    secMon.classList.add('hidden');
+                    secCalc.classList.remove('hidden');
+                }
+            }
+
+            function openLoginModal() { document.getElementById('login-modal').classList.remove('hidden'); }
+            function closeLoginModal() { document.getElementById('login-modal').classList.add('hidden'); }
+            function openControlModal() { document.getElementById('control-modal').classList.remove('hidden'); }
+            function closeControlModal() { document.getElementById('control-modal').classList.add('hidden'); }
+
+            function setContractType(type) {
+                contractRate = (type === 'green') ? 400 : 200;
+                document.getElementById('btn-type-green').className = type === 'green' ? "py-2 px-4 rounded-lg border border-red-900/60 font-semibold text-sm bg-red-950/40 text-red-400" : "py-2 px-4 rounded-lg border border-gray-800 font-semibold text-sm text-gray-400";
+                document.getElementById('btn-type-sms').className = type === 'sms' ? "py-2 px-4 rounded-lg border border-red-900/60 font-semibold text-sm bg-red-950/40 text-red-400" : "py-2 px-4 rounded-lg border border-gray-800 font-semibold text-sm text-gray-400";
+                calculateContract();
+            }
+
+            function adjustDays(amount) {
+                const input = document.getElementById('calc-days');
+                let val = (parseInt(input.value) || 1) + amount;
+                input.value = val < 1 ? 1 : val;
+                calculateContract();
+            }
+
+            function calculateContract() {
+                const text = document.getElementById('calc-text').value;
+                const excludePrefix = document.getElementById('calc-exclude-prefix').checked;
+                const days = parseInt(document.getElementById('calc-days').value) || 1;
+
+                let rawLength = text.length;
+                let calcLength = rawLength;
+
+                if (excludePrefix && text.toLowerCase().includes('/wnews [реклама]')) {
+                    calcLength = Math.max(0, calcLength - 16);
+                }
+
+                const oneDaySum = calcLength * contractRate;
+                const totalSum = oneDaySum * days;
+                const treasurySum = totalSum * 0.75;
+                const employeeSum = totalSum * 0.25;
+
+                document.getElementById('res-total-chars').innerText = rawLength;
+                document.getElementById('res-calc-chars').innerText = calcLength;
+                document.getElementById('res-one-day-sum').innerText = oneDaySum.toLocaleString() + ' $';
+                document.getElementById('res-total-sum').innerText = totalSum.toLocaleString() + ' $';
+                document.getElementById('res-treasury-sum').innerText = treasurySum.toLocaleString() + ' $';
+                document.getElementById('res-employee-sum').innerText = employeeSum.toLocaleString() + ' $';
+            }
+
+            async function updateStats() {
+                try {
+                    const response = await fetch('/api/stats');
+                    const data = await response.json();
+                    
+                    document.getElementById('server-time').innerText = data.server_time;
+                    document.getElementById('total-contracts-count').innerText = data.total_contracts;
+                    
+                    const btnPause = document.getElementById('ctrl-btn-pause');
+                    const statPause = document.getElementById('ctrl-pause-status');
+                    if (btnPause && statPause) {
+                        if (data.is_paused) {
+                            btnPause.className = "w-full bg-emerald-600 text-white font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center";
+                            statPause.innerText = "ВКЛЮЧИТЬ";
+                        } else {
+                            btnPause.className = "w-full bg-red-600 text-white font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center";
+                            statPause.innerText = "ПАУЗА";
+                        }
+                    }
+
+                    const nextContainer = document.getElementById('next-contract-container');
+                    if (data.next_contract) {
+                        const nc = data.next_contract;
+                        let badge = nc.is_skipped ? '<span class="bg-red-900/60 text-red-300 text-[10px] px-2 py-0.5 rounded">ПРОПУЩЕН</span>' : `<span class="bg-yellow-900/40 text-yellow-500 text-[10px] px-2 py-0.5 rounded">ЧЕРЕЗ ${nc.time_left}</span>`;
+                        nextContainer.innerHTML = `
+                            <div class="flex justify-between text-xs text-gray-400 border-b border-red-900/10 pb-2">
+                                <span>Слот: <strong>${nc.time_str} МСК</strong> (${nc.date_range})</span>${badge}
+                            </div>
+                            <div class="bg-[#100b0b] p-3 rounded border border-red-950 ${nc.is_skipped ? 'line-through text-gray-500' : 'text-gray-200'} text-sm">${nc.text}</div>
+                        `;
+                    } else {
+                        nextContainer.innerHTML = '<div class="text-center text-gray-500 text-sm">Нет active-контрактов</div>';
+                    }
+
+                    const tableBody = document.getElementById('contracts-table-body');
+                    if (data.all_contracts && data.all_contracts.length > 0) {
+                        tableBody.innerHTML = data.all_contracts.map(c => `
+                            <tr class="hover:bg-red-950/5"><td class="py-2 px-4 text-red-400">${c.times.join(', ')}</td><td class="py-2 px-4 text-gray-300">${c.text}</td><td class="py-2 px-4 text-gray-400">${c.date_range}</td></tr>
+                        `).join('');
+                    }
+                } catch (e) {}
+            }
+
+            async function togglePause() { await fetch('/api/toggle-pause', { method: 'POST' }); updateStats(); }
+            async function toggleSkipNext() { await fetch('/api/skip-next', { method: 'POST' }); updateStats(); closeControlModal(); }
+
+            setInterval(updateStats, 1000);
+            updateStats();
+        </script>
+    </body>
+    </html>
+    """
+    return render_template_string(html_template, sheet_id=SHEET_ID)
+
+@app.route('/login', methods=['POST'])
+def login():
+    if request.form.get("password") == ADMIN_PASSWORD:
+        session['authorized'] = True
+    return redirect('/')
+
+@app.route('/logout')
+def logout():
+    session.pop('authorized', None)
+    return redirect('/')
 
 @app.route('/api/stats')
-def get_stats():
-    next_msg, next_time_left, contract_expiry, next_is_last = get_next_message_info()
-    
-    # Определяем, пропущено ли следующее по расписанию время
-    next_exec_time = get_next_execution_time()
-    is_next_skipped = (next_exec_time in skipped_times) if next_exec_time else False
-    
-    # Получаем все контракты и проверяем их статус пропуска
-    all_contracts = get_all_contracts_from_sheet()
-    for c in all_contracts:
-        times = c['time'].split()
-        c['is_skipped'] = any(parse_time(t) in skipped_times for t in times if parse_time(t))
-        
+def api_stats():
+    now = get_msk_time()
+    contracts = parse_database()
+    next_c = get_next_contract_info()
+    next_contract_data = None
+    if next_c:
+        diff = next_c["datetime"] - now
+        hours, remainder = divmod(int(diff.total_seconds()), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        time_left_str = f"{minutes}м {seconds}с" if hours == 0 else f"{hours}ч {minutes}м"
+        next_contract_data = {
+            "time_str": next_c["time_str"],
+            "text": next_c["text"],
+            "date_range": next_c["date_range"],
+            "time_left": time_left_str,
+            "is_skipped": next_c["is_skipped"],
+            "skip_key": next_c["skip_key"]
+        }
     return jsonify({
-        "is_authorized": bool(session.get('is_authorized')),
-        "is_enabled": is_bot_enabled,
-        "next_msg": next_msg,
-        "next_time_left": next_time_left,
-        "contract_expiry": contract_expiry,
-        "next_is_last": next_is_last,
-        "is_next_skipped": is_next_skipped,
-        "all_contracts": all_contracts
+        "server_time": now.strftime("%H:%M:%S"),
+        "total_contracts": len(contracts),
+        "is_paused": system_state["is_paused"],
+        "next_contract": next_contract_data,
+        "all_contracts": contracts
     })
 
-if __name__ == '__main__':
-    # Принудительно греем кэш при старте
-    fetch_sheet_rows()
-    threading.Thread(target=cron_loop, daemon=True).start()
-    app.run(host='0.0.0.0', port=10000)
+@app.route('/api/toggle-pause', methods=['POST'])
+def toggle_pause_api():
+    if session.get('authorized'):
+        system_state["is_paused"] = not system_state["is_paused"]
+    return jsonify({"success": True})
+
+@app.route('/api/skip-next', methods=['POST'])
+def skip_next_api():
+    if not session.get('authorized'):
+        return jsonify({"error": "Unauthorized"}), 401
+    next_c = get_next_contract_info()
+    if next_c:
+        key = next_c["skip_key"]
+        if key in system_state["skipped_contracts"]:
+            system_state["skipped_contracts"].remove(key)
+        else:
+            system_state["skipped_contracts"].append(key)
+    return jsonify({"success": True})
+
+def send_discord_webhook(text):
+    if not WEBHOOK_URL: return False
+    try:
+        # Формируем текст сообщения с упоминанием роли
+        full_content = f"<@&{ROLE_ID}>\n{text}"
+        requests.post(WEBHOOK_URL, json={"content": full_content}, timeout=10)
+        return True
+    except: return False
+
+async def schedule_loop():
+    last_sent_minute = -1
+    while True:
+        try:
+            now = get_msk_time()
+            if now.minute != last_sent_minute:
+                current_time_str = now.strftime("%H:%M")
+                if not system_state["is_paused"]:
+                    for contract in parse_database():
+                        if current_time_str in contract["times"]:
+                            if f"{current_time_str}_{contract['date_range']}" not in system_state["skipped_contracts"]:
+                                send_discord_webhook(contract["text"])
+                last_sent_minute = now.minute
+        except: pass
+        await asyncio.sleep(15)
+
+if __name__ == "__main__":
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False, use_reloader=False), daemon=True).start()
+    asyncio.get_event_loop().run_until_complete(schedule_loop())
