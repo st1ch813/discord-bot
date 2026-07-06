@@ -10,7 +10,7 @@ import requests
 from flask import Flask, render_template_string, jsonify, request, session, redirect
 
 # ================= НАСТРОЙКИ БОТА =================
-ROLE_ID = "1470465522431819897"
+ROLE_ID = "1447219553259094219"
 SHEET_ID = "1B8Ts_DHQ11878tw1Qa8mUdjxFdCb249v78R10n9czBw"
 # ==================================================
 
