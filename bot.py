@@ -36,7 +36,7 @@ def get_msk_time():
 
 def parse_database():
     contracts = []
-    export_url = f"[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){SHEET_ID}/export?format=csv&gid=0"
+    export_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
     now = get_msk_time()
     
     try:
@@ -56,7 +56,6 @@ def parse_database():
             if "время" in times_str.lower() or "текст" in text.lower():
                 continue
                 
-            # Очистка от случайных обратных кавычек из таблицы, чтобы не ломать наш шаблон
             clean_text = text.strip().replace('`', '').strip('"').strip()
             times = [t.strip() for t in times_str.split() if t.strip()]
             
@@ -151,8 +150,8 @@ def dashboard():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Управление Рассылкой & Калькулятор</title>
-        <script src="[https://cdn.tailwindcss.com](https://cdn.tailwindcss.com)"></script>
-        <link rel="stylesheet" href="[https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css](https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css)">
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
         <style>
             body { background-color: #0f0a0a; color: #e5e5e5; font-family: sans-serif; }
             .glow-card { box-shadow: 0 4px 20px rgba(220, 38, 38, 0.15); border: 1px solid rgba(220, 38, 38, 0.2); }
@@ -348,7 +347,7 @@ def dashboard():
                     <button onclick="toggleSkipNext()" class="w-full bg-[#241a1a] text-red-400 font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center">
                         <span>Пропустить контракт</span>
                     </button>
-                    <a href="[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){{ sheet_id }}/edit?gid=0#gid=0" target="_blank" class="w-full bg-[#1b221d] text-emerald-400 font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center">
+                    <a href="https://docs.google.com/spreadsheets/d/{{ sheet_id }}/edit?gid=0#gid=0" target="_blank" class="w-full bg-[#1b221d] text-emerald-400 font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center">
                         <span>Открыть таблицу</span>
                     </a>
                 </div>
@@ -357,7 +356,7 @@ def dashboard():
 
         <script>
             let currentTab = 'monitoring';
-            let contractRate = 300; // Тариф по умолчанию изменен на 300$
+            let contractRate = 300; 
 
             function switchTab(tabName) {
                 currentTab = tabName;
@@ -385,7 +384,7 @@ def dashboard():
             function closeControlModal() { document.getElementById('control-modal').classList.add('hidden'); }
 
             function setContractType(type) {
-                contractRate = (type === 'green') ? 300 : 200; // Изменено с 400 на 300
+                contractRate = (type === 'green') ? 300 : 200; 
                 document.getElementById('btn-type-green').className = type === 'green' ? "py-2 px-3 rounded-lg border border-red-900/60 font-semibold text-xs bg-red-950/40 text-red-400" : "py-2 px-3 rounded-lg border border-gray-800 font-semibold text-xs text-gray-400";
                 document.getElementById('btn-type-sms').className = type === 'sms' ? "py-2 px-3 rounded-lg border border-red-900/60 font-semibold text-xs bg-red-950/40 text-red-400" : "py-2 px-3 rounded-lg border border-gray-800 font-semibold text-xs text-gray-400";
                 calculateContract();
@@ -398,7 +397,6 @@ def dashboard():
                 calculateContract();
             }
 
-            // Формула расчета: Символы * Тариф * Кол-во сообщений * Кол-во дней
             function calculateContract() {
                 const text = document.getElementById('calc-text').value;
                 const msgPerDay = parseInt(document.getElementById('calc-msg-per-day').value) || 1;
@@ -553,7 +551,6 @@ def skip_next_api():
 def send_discord_webhook(text):
     if not WEBHOOK_URL: return False
     try:
-        # Роль пингуется сверху, а сам текст уходит в красивую рамку
         full_content = f"<@&{ROLE_ID}>\n```\n{text}\n```"
         requests.post(WEBHOOK_URL, json={"content": full_content}, timeout=10)
         return True
