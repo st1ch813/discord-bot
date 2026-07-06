@@ -36,7 +36,7 @@ def get_msk_time():
 
 def parse_database():
     contracts = []
-    export_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
+    export_url = f"[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){SHEET_ID}/export?format=csv&gid=0"
     now = get_msk_time()
     
     try:
@@ -56,7 +56,8 @@ def parse_database():
             if "время" in times_str.lower() or "текст" in text.lower():
                 continue
                 
-            clean_text = text.strip().strip('"').strip('`').strip()
+            # Очистка от случайных обратных кавычек из таблицы, чтобы не ломать наш шаблон
+            clean_text = text.strip().replace('`', '').strip('"').strip()
             times = [t.strip() for t in times_str.split() if t.strip()]
             
             if times and clean_text:
@@ -150,8 +151,8 @@ def dashboard():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Управление Рассылкой & Калькулятор</title>
-        <script src="https://cdn.tailwindcss.com"></script>
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+        <script src="[https://cdn.tailwindcss.com](https://cdn.tailwindcss.com)"></script>
+        <link rel="stylesheet" href="[https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css](https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css)">
         <style>
             body { background-color: #0f0a0a; color: #e5e5e5; font-family: sans-serif; }
             .glow-card { box-shadow: 0 4px 20px rgba(220, 38, 38, 0.15); border: 1px solid rgba(220, 38, 38, 0.2); }
@@ -258,7 +259,7 @@ def dashboard():
                         <h2 class="text-lg font-bold text-white">Параметры контракта</h2>
                         <div>
                             <label class="block text-xs uppercase text-gray-400 mb-2">Текст</label>
-                            <textarea id="calc-text" rows="8" placeholder="Вставьте текст контракта..." 
+                            <textarea id="calc-text" rows="8" placeholder="Вставьте text контракта..." 
                                       class="w-full bg-[#100b0b] border border-red-950 rounded-lg p-3 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-red-500 resize-none"
                                       oninput="calculateContract()"></textarea>
                         </div>
@@ -268,7 +269,7 @@ def dashboard():
                                 <label class="block text-xs uppercase text-gray-400 mb-2">Тип объявления</label>
                                 <div class="grid grid-cols-1 gap-2">
                                     <button onclick="setContractType('green')" id="btn-type-green" class="py-2 px-3 rounded-lg border border-red-900/60 font-semibold text-xs bg-red-950/40 text-red-400 transition">
-                                        Зеленый (400$)
+                                        Зеленый (300$)
                                     </button>
                                     <button onclick="setContractType('sms')" id="btn-type-sms" class="py-2 px-3 rounded-lg border border-gray-800 font-semibold text-xs text-gray-400 transition">
                                         SMS (200$)
@@ -299,7 +300,7 @@ def dashboard():
                             <h2 class="text-lg font-bold text-white">Результаты расчета</h2>
                             <div class="bg-[#100b0b] p-3 rounded-lg border border-red-950 text-xs space-y-1 text-gray-400">
                                 <div class="flex justify-between"><span>Всего символов:</span><span id="res-total-chars" class="text-white">0</span></div>
-                                <div class="flex justify-between"><span>За 1 сообщение:</span><span id="res-one-day-sum" class="text-white">0 $</span></div>
+                                <div class="flex justify-between"><span>За 1 выход:</span><span id="res-one-day-sum" class="text-white">0 $</span></div>
                             </div>
                             <div class="space-y-2">
                                 <div class="bg-red-950/20 border border-red-900/40 p-3 rounded-lg">
@@ -347,7 +348,7 @@ def dashboard():
                     <button onclick="toggleSkipNext()" class="w-full bg-[#241a1a] text-red-400 font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center">
                         <span>Пропустить контракт</span>
                     </button>
-                    <a href="https://docs.google.com/spreadsheets/d/{{ sheet_id }}/edit?gid=0#gid=0" target="_blank" class="w-full bg-[#1b221d] text-emerald-400 font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center">
+                    <a href="[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){{ sheet_id }}/edit?gid=0#gid=0" target="_blank" class="w-full bg-[#1b221d] text-emerald-400 font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center">
                         <span>Открыть таблицу</span>
                     </a>
                 </div>
@@ -356,7 +357,7 @@ def dashboard():
 
         <script>
             let currentTab = 'monitoring';
-            let contractRate = 400;
+            let contractRate = 300; // Тариф по умолчанию изменен на 300$
 
             function switchTab(tabName) {
                 currentTab = tabName;
@@ -384,7 +385,7 @@ def dashboard():
             function closeControlModal() { document.getElementById('control-modal').classList.add('hidden'); }
 
             function setContractType(type) {
-                contractRate = (type === 'green') ? 400 : 200;
+                contractRate = (type === 'green') ? 300 : 200; // Изменено с 400 на 300
                 document.getElementById('btn-type-green').className = type === 'green' ? "py-2 px-3 rounded-lg border border-red-900/60 font-semibold text-xs bg-red-950/40 text-red-400" : "py-2 px-3 rounded-lg border border-gray-800 font-semibold text-xs text-gray-400";
                 document.getElementById('btn-type-sms').className = type === 'sms' ? "py-2 px-3 rounded-lg border border-red-900/60 font-semibold text-xs bg-red-950/40 text-red-400" : "py-2 px-3 rounded-lg border border-gray-800 font-semibold text-xs text-gray-400";
                 calculateContract();
@@ -397,6 +398,7 @@ def dashboard():
                 calculateContract();
             }
 
+            // Формула расчета: Символы * Тариф * Кол-во сообщений * Кол-во дней
             function calculateContract() {
                 const text = document.getElementById('calc-text').value;
                 const msgPerDay = parseInt(document.getElementById('calc-msg-per-day').value) || 1;
@@ -447,7 +449,7 @@ def dashboard():
                             <div class="bg-[#100b0b] p-3 rounded border border-red-950 ${nc.is_skipped ? 'line-through text-gray-500' : 'text-gray-200'} text-sm">${nc.text}</div>
                         `;
                     } else {
-                        nextContainer.innerHTML = '<div class="text-center text-gray-500 text-sm">Нет активных контрактов</div>';
+                        nextContainer.innerHTML = '<div class="text-center text-gray-500 text-sm">Нет active-контрактов</div>';
                     }
 
                     const tableBody = document.getElementById('contracts-table-body');
@@ -551,14 +553,12 @@ def skip_next_api():
 def send_discord_webhook(text):
     if not WEBHOOK_URL: return False
     try:
-        # Пинг роли отправляется сверху отдельной строкой, 
-        # а сам текст контракта переносится ниже и оборачивается в тройные обратные кавычки
+        # Роль пингуется сверху, а сам текст уходит в красивую рамку
         full_content = f"<@&{ROLE_ID}>\n```\n{text}\n```"
-        
         requests.post(WEBHOOK_URL, json={"content": full_content}, timeout=10)
         return True
-    except: 
-        return False
+    except: return False
+
 async def schedule_loop():
     last_sent_minute = -1
     while True:
