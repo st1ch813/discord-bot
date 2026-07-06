@@ -265,20 +265,13 @@ def dashboard():
                                       class="w-full bg-[#100b0b] border border-red-950 rounded-lg p-3 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-red-500 resize-none"
                                       oninput="calculateContract()"></textarea>
                         </div>
-
-                        <div class="flex items-center space-x-2 py-1">
-                            <input type="checkbox" id="calc-exclude-prefix" onchange="calculateContract()" class="w-4 h-4 rounded bg-[#100b0b] border-red-950 text-red-600 focus:ring-0 focus:ring-offset-0">
-                            <label for="calc-exclude-prefix" class="text-xs text-gray-300 cursor-pointer select-none">
-                                Исключать префикс /wnews [Реклама] (16 симв.)
-                            </label>
-                        </div>
                         
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
                             <div>
                                 <label class="block text-xs uppercase text-gray-400 mb-2">Тип объявления</label>
                                 <div class="grid grid-cols-1 gap-2">
                                     <button onclick="setContractType('green')" id="btn-type-green" class="py-2 px-3 rounded-lg border border-red-900/60 font-semibold text-xs bg-red-950/40 text-red-400 transition">
-                                        Зеленый (400$)
+                                        Зеленый (300$)
                                     </button>
                                     <button onclick="setContractType('sms')" id="btn-type-sms" class="py-2 px-3 rounded-lg border border-gray-800 font-semibold text-xs text-gray-400 transition">
                                         SMS (200$)
@@ -366,7 +359,7 @@ def dashboard():
 
         <script>
             let currentTab = 'monitoring';
-            let contractRate = 400; // Тариф Зеленого объявления равен 400
+            let contractRate = 300; // Тариф Зеленого объявления изменен на 300
 
             function switchTab(tabName) {
                 currentTab = tabName;
@@ -394,7 +387,7 @@ def dashboard():
             function closeControlModal() { document.getElementById('control-modal').classList.add('hidden'); }
 
             function setContractType(type) {
-                contractRate = (type === 'green') ? 400 : 200; 
+                contractRate = (type === 'green') ? 300 : 200; 
                 document.getElementById('btn-type-green').className = type === 'green' ? "py-2 px-3 rounded-lg border border-red-900/60 font-semibold text-xs bg-red-950/40 text-red-400" : "py-2 px-3 rounded-lg border border-gray-800 font-semibold text-xs text-gray-400";
                 document.getElementById('btn-type-sms').className = type === 'sms' ? "py-2 px-3 rounded-lg border border-red-900/60 font-semibold text-xs bg-red-950/40 text-red-400" : "py-2 px-3 rounded-lg border border-gray-800 font-semibold text-xs text-gray-400";
                 calculateContract();
@@ -411,12 +404,8 @@ def dashboard():
                 const text = document.getElementById('calc-text').value;
                 const msgPerDay = parseInt(document.getElementById('calc-msg-per-day').value) || 1;
                 const days = parseInt(document.getElementById('calc-days').value) || 1;
-                const excludePrefix = document.getElementById('calc-exclude-prefix').checked;
 
                 let calcLength = text.length;
-                if (excludePrefix && text.includes('/wnews [Реклама]')) {
-                    calcLength = Math.max(0, calcLength - 16);
-                }
 
                 const oneMsgSum = calcLength * contractRate;
                 const totalSum = oneMsgSum * msgPerDay * days;
@@ -565,7 +554,6 @@ def skip_next_api():
 def send_discord_webhook(text):
     if not WEBHOOK_URL: return False
     try:
-        # Пинг роли сверху, текст объявления обернут в тройные обратные кавычки
         full_content = f"<@&{ROLE_ID}>\n```\n{text}\n```"
         requests.post(WEBHOOK_URL, json={"content": full_content}, timeout=10)
         return True
