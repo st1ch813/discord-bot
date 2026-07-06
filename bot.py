@@ -11,7 +11,8 @@ from flask import Flask, render_template_string, jsonify, request, session, redi
 
 # ================= НАСТРОЙКИ БОТА =================
 ROLE_ID = "1447219553259094219"
-SHEET_ID = "1B8Ts_DHQ11878tw1Qa8mUdjxFdCb249v78R10n9czBw"
+# Очищаем ID от возможных невидимых пробелов и кавычек при копировании
+SHEET_ID = "1B8Ts_DHQ11878tw1Qa8mUdjxFdCb249v78R10n9czBw".strip().replace("'", "").replace('"', "")
 # ==================================================
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -36,10 +37,12 @@ def get_msk_time():
 
 def parse_database():
     contracts = []
-    export_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
+    # Безопасное формирование чистого URL
+    export_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0".strip()
     now = get_msk_time()
     
     try:
+        logger.info(f"Запрос к Google Таблице по адресу: '{export_url}'")
         response = requests.get(export_url, timeout=10)
         if response.status_code != 200:
             logger.error(f"Не удалось скачать Google Таблицу. Статус: {response.status_code}")
@@ -139,7 +142,7 @@ def get_next_contract_info():
     upcoming_contracts.sort(key=lambda x: x["datetime"])
     return upcoming_contracts[0]
 
-# --- FLASK ROUTES ---
+# --- FLASK WEBSERVER ---
 
 @app.route('/')
 def dashboard():
@@ -258,9 +261,16 @@ def dashboard():
                         <h2 class="text-lg font-bold text-white">Параметры контракта</h2>
                         <div>
                             <label class="block text-xs uppercase text-gray-400 mb-2">Текст</label>
-                            <textarea id="calc-text" rows="8" placeholder="Вставьте text контракта..." 
+                            <textarea id="calc-text" rows="8" placeholder="Вставьте текст контракта..." 
                                       class="w-full bg-[#100b0b] border border-red-950 rounded-lg p-3 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-red-500 resize-none"
                                       oninput="calculateContract()"></textarea>
+                        </div>
+
+                        <div class="flex items-center space-x-2 py-1">
+                            <input type="checkbox" id="calc-exclude-prefix" onchange="calculateContract()" class="w-4 h-4 rounded bg-[#100b0b] border-red-950 text-red-600 focus:ring-0 focus:ring-offset-0">
+                            <label for="calc-exclude-prefix" class="text-xs text-gray-300 cursor-pointer select-none">
+                                Исключать префикс /wnews [Реклама] (16 симв.)
+                            </label>
                         </div>
                         
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
@@ -268,7 +278,7 @@ def dashboard():
                                 <label class="block text-xs uppercase text-gray-400 mb-2">Тип объявления</label>
                                 <div class="grid grid-cols-1 gap-2">
                                     <button onclick="setContractType('green')" id="btn-type-green" class="py-2 px-3 rounded-lg border border-red-900/60 font-semibold text-xs bg-red-950/40 text-red-400 transition">
-                                        Зеленый (300$)
+                                        Зеленый (400$)
                                     </button>
                                     <button onclick="setContractType('sms')" id="btn-type-sms" class="py-2 px-3 rounded-lg border border-gray-800 font-semibold text-xs text-gray-400 transition">
                                         SMS (200$)
@@ -356,7 +366,7 @@ def dashboard():
 
         <script>
             let currentTab = 'monitoring';
-            let contractRate = 300; 
+            let contractRate = 400; // Тариф Зеленого объявления равен 400
 
             function switchTab(tabName) {
                 currentTab = tabName;
@@ -384,7 +394,7 @@ def dashboard():
             function closeControlModal() { document.getElementById('control-modal').classList.add('hidden'); }
 
             function setContractType(type) {
-                contractRate = (type === 'green') ? 300 : 200; 
+                contractRate = (type === 'green') ? 400 : 200; 
                 document.getElementById('btn-type-green').className = type === 'green' ? "py-2 px-3 rounded-lg border border-red-900/60 font-semibold text-xs bg-red-950/40 text-red-400" : "py-2 px-3 rounded-lg border border-gray-800 font-semibold text-xs text-gray-400";
                 document.getElementById('btn-type-sms').className = type === 'sms' ? "py-2 px-3 rounded-lg border border-red-900/60 font-semibold text-xs bg-red-950/40 text-red-400" : "py-2 px-3 rounded-lg border border-gray-800 font-semibold text-xs text-gray-400";
                 calculateContract();
@@ -401,8 +411,12 @@ def dashboard():
                 const text = document.getElementById('calc-text').value;
                 const msgPerDay = parseInt(document.getElementById('calc-msg-per-day').value) || 1;
                 const days = parseInt(document.getElementById('calc-days').value) || 1;
+                const excludePrefix = document.getElementById('calc-exclude-prefix').checked;
 
                 let calcLength = text.length;
+                if (excludePrefix && text.includes('/wnews [Реклама]')) {
+                    calcLength = Math.max(0, calcLength - 16);
+                }
 
                 const oneMsgSum = calcLength * contractRate;
                 const totalSum = oneMsgSum * msgPerDay * days;
@@ -453,13 +467,13 @@ def dashboard():
                     const tableBody = document.getElementById('contracts-table-body');
                     if (data.all_contracts && data.all_contracts.length > 0) {
                         tableBody.innerHTML = data.all_contracts.map(c => {
-                            let statusBadge = '<span class="inline-block bg-green-950/60 text-green-400 border border-green-900/60 text-[10px] font-bold px-2.5 py-1 rounded whitespace-nowrap">Активен</span>';
+                            let statusBadge = '<span class="inline-block bg-green-950/60 text-green-400 border border-green-900/60 text-[10px] font-bold px-2.5 py-1 rounded">Активен</span>';
                             let rowClass = "hover:bg-red-950/5";
                             
                             if (c.date_status === 'last_day') {
-                                statusBadge = '<span class="inline-block bg-amber-950/60 text-amber-400 border border-amber-900/60 text-[10px] font-bold px-2.5 py-1 rounded whitespace-nowrap">Последний день</span>';
+                                statusBadge = '<span class="inline-block bg-amber-950/60 text-amber-400 border border-amber-900/60 text-[10px] font-bold px-2.5 py-1 rounded text-center leading-tight">Последний<br>день</span>';
                             } else if (c.date_status === 'expired') {
-                                statusBadge = '<span class="inline-block bg-red-950/60 text-red-400 border border-red-900/60 text-[10px] font-bold px-2.5 py-1 rounded whitespace-nowrap">Просрочен</span>';
+                                statusBadge = '<span class="inline-block bg-red-950/60 text-red-400 border border-red-900/60 text-[10px] font-bold px-2.5 py-1 rounded">Просрочен</span>';
                                 rowClass = "opacity-40 hover:bg-red-950/5";
                             }
 
@@ -470,7 +484,7 @@ def dashboard():
                                     <td class="py-3 px-4"><div class="flex flex-wrap gap-1.5 max-w-[210px]">${timeBadges}</div></td>
                                     <td class="py-3 px-4 text-gray-300 break-words max-w-xs md:max-w-xl">${c.text}</td>
                                     <td class="py-3 px-4 text-gray-400 whitespace-nowrap">${c.date_range}</td>
-                                    <td class="py-3 px-4 text-center whitespace-nowrap">${statusBadge}</td>
+                                    <td class="py-3 px-4 text-center">${statusBadge}</td>
                                 </tr>
                             `;
                         }).join('');
@@ -551,6 +565,7 @@ def skip_next_api():
 def send_discord_webhook(text):
     if not WEBHOOK_URL: return False
     try:
+        # Пинг роли сверху, текст объявления обернут в тройные обратные кавычки
         full_content = f"<@&{ROLE_ID}>\n```\n{text}\n```"
         requests.post(WEBHOOK_URL, json={"content": full_content}, timeout=10)
         return True
