@@ -11,8 +11,8 @@ from flask import Flask, render_template_string, jsonify, request, session, redi
 
 # ================= НАСТРОЙКИ БОТА =================
 ROLE_ID = "1447219553259094219"
-# Очищаем ID от возможных невидимых пробелов и кавычек при копировании
-SHEET_ID = "1B8Ts_DHQ11878tw1Qa8mUdjxFdCb249v78R10n9czBw".strip().replace("'", "").replace('"', "")
+# Тщательно очищаем ID от любых невидимых символов, кавычек и пробелов
+SHEET_ID = "1B8Ts_DHQ11878tw1Qa8mUdjxFdCb249v78R10n9czBw".strip().replace("'", "").replace('"', "").replace(" ", "")
 # ==================================================
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -37,8 +37,9 @@ def get_msk_time():
 
 def parse_database():
     contracts = []
-    # Безопасное формирование чистого URL
-    export_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0".strip()
+    # Формируем абсолютно чистую строку URL без лишних пробелов и символов
+    clean_sheet_id = SHEET_ID.strip().replace("'", "").replace('"', "").replace(" ", "")
+    export_url = f"https://docs.google.com/spreadsheets/d/{clean_sheet_id}/export?format=csv&gid=0".strip()
     now = get_msk_time()
     
     try:
@@ -359,7 +360,7 @@ def dashboard():
 
         <script>
             let currentTab = 'monitoring';
-            let contractRate = 300; // Тариф Зеленого объявления изменен на 300
+            let contractRate = 300; // По умолчанию выбран Зеленый (300$)
 
             function switchTab(tabName) {
                 currentTab = tabName;
