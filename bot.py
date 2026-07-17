@@ -176,17 +176,48 @@ def dashboard():
             body { background-color: #0f0a0a; color: #e5e5e5; font-family: sans-serif; }
             .glow-card { box-shadow: 0 4px 20px rgba(220, 38, 38, 0.15); border: 1px solid rgba(220, 38, 38, 0.2); }
             .tab-active { border-bottom: 2px solid #ef4444; color: #ef4444; }
+            
+            /* Стили для выезжающего бокового HUD-баннера слева */
+            .side-hud {
+                position: fixed;
+                left: -240px; /* Скрыт по умолчанию, виден только кончик */
+                top: 50%;
+                transform: translateY(-50%);
+                width: 300px;
+                height: 90px;
+                z-index: 9999;
+                transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+                border-radius: 0 12px 12px 0;
+                box-shadow: 5px 0 25px rgba(0, 0, 0, 0.6);
+            }
+            
+            /* Наведение: плавно выдвигаем плашку вправо и немного увеличиваем */
+            .side-hud:hover {
+                left: 0px;
+                transform: translateY(-50%) scale(1.05);
+            }
         </style>
     </head>
     <body class="min-h-screen flex flex-col pb-10">
 
-        <!-- Глобальный HUD-баннер паузы -->
-        <div id="global-pause-banner" class="hidden bg-red-600 text-white text-center py-2 px-4 font-bold animate-pulse text-sm sticky top-0 z-[100] shadow-md">
-            <i class="fa-solid fa-triangle-exclamation mr-2 animate-bounce"></i> РАССЫЛКА ПРИОСТАНОВЛЕНА (ВКЛЮЧЕНА ОБЩАЯ ПАУЗА)
+        <!-- ВЫЕЗЖАЮЩАЯ БОКОВАЯ ПЛАШКА СЛЕВА (HUD) -->
+        <div id="left-hud-banner" onclick="handleHudClick()" class="side-hud bg-green-950/90 border-r-4 border-green-500 text-white p-4 flex items-center justify-between cursor-pointer select-none">
+            <div class="flex flex-col justify-center flex-grow pr-3">
+                <span id="hud-title" class="font-bold text-xs tracking-wider text-green-400">СИСТЕМА АКТИВНА</span>
+                <span id="hud-desc" class="text-[11px] text-gray-300 mt-0.5">Все рассылки идут по графику</span>
+                {% if session.get('authorized') %}
+                <span class="text-[9px] text-gray-400 mt-1 italic hover:underline">Нажми, чтобы поставить паузу</span>
+                {% endif %}
+            </div>
+            <!-- Видимый кончик плашки, который манит навести курсор -->
+            <div class="w-12 h-full flex flex-col items-center justify-center border-l border-white/10 pl-2">
+                <i id="hud-icon" class="fa-solid fa-circle-check text-green-400 text-xl animate-pulse"></i>
+                <span class="text-[8px] text-gray-400 mt-1 uppercase font-semibold">HUD</span>
+            </div>
         </div>
 
-        <!-- Шапка -->
-        <header class="bg-[#1a1313] border-b border-red-900/40 p-4 sticky top-[38px] z-50 shadow-lg">
+        <!-- Шапка (теперь зафиксирована ровно на самом верху без сдвигов) -->
+        <header class="bg-[#1a1313] border-b border-red-900/40 p-4 sticky top-0 z-50 shadow-lg">
             <div class="max-w-6xl mx-auto flex justify-between items-center">
                 <div class="flex items-center space-x-6">
                     <h1 class="text-xl font-bold text-red-500 flex items-center space-x-2">
@@ -400,6 +431,7 @@ def dashboard():
             let currentTab = 'monitoring';
             let contractRate = 300; 
             let isUpdating = false; 
+            let isAuthorized = {% if session.get('authorized') %}true{% else %}false{% endif %};
 
             function switchTab(tabName) {
                 currentTab = tabName;
@@ -476,13 +508,11 @@ def dashboard():
                 document.getElementById('res-employee-sum').innerText = employeeSum.toLocaleString() + ' $';
             }
 
-            // Исправленная и безопасная обработка паузы конкретного контракта
             async function toggleContractPause(checkboxElement) {
                 isUpdating = true;
                 checkboxElement.disabled = true;
                 
                 const contractCode = checkboxElement.dataset.code;
-                // Сохраняем состояние ДО клика, чтобы если запрос упадет — вернуть обратно
                 const previousState = !checkboxElement.checked; 
 
                 try {
@@ -493,7 +523,6 @@ def dashboard():
                     });
                     
                     if (!response.ok) {
-                        // Если сервер выдал ошибку, возвращаем галочку назад
                         checkboxElement.checked = previousState;
                     }
                 } catch (e) {
@@ -508,6 +537,12 @@ def dashboard():
                 }
             }
 
+            // Обработка клика по боковому баннеру (доступна только для админов)
+            async function handleHudClick() {
+                if (!isAuthorized) return;
+                await togglePause();
+            }
+
             async function updateStats(force = false) {
                 if (isUpdating && !force) return;
 
@@ -518,21 +553,43 @@ def dashboard():
                     document.getElementById('server-time').innerText = data.server_time;
                     document.getElementById('total-contracts-count').innerText = data.total_contracts;
                     
-                    // Показ или скрытие глобального HUD-баннера на самом верху
-                    const globalPauseBanner = document.getElementById('global-pause-banner');
                     const sysStatusText = document.getElementById('system-status-text');
-                    
+                    const hudBanner = document.getElementById('left-hud-banner');
+                    const hudTitle = document.getElementById('hud-title');
+                    const hudDesc = document.getElementById('hud-desc');
+                    const hudIcon = document.getElementById('hud-icon');
+
                     if (data.is_paused) {
-                        if (globalPauseBanner) globalPauseBanner.classList.remove('hidden');
+                        // Меняем статус в карточках
                         if (sysStatusText) {
                             sysStatusText.className = "text-lg font-bold text-red-500";
                             sysStatusText.innerText = "НА ПАУЗЕ";
                         }
+                        
+                        // Стилизуем HUD-баннер под КРАСНУЮ аварийную тему
+                        if (hudBanner) {
+                            hudBanner.className = "side-hud bg-red-950/90 border-r-4 border-red-500 text-white p-4 flex items-center justify-between cursor-pointer select-none";
+                        }
+                        if (hudTitle) hudTitle.innerText = "РАССЫЛКА НА ПАУЗЕ";
+                        if (hudDesc) hudDesc.innerText = "Автоматические выходы остановлены";
+                        if (hudIcon) {
+                            hudIcon.className = "fa-solid fa-triangle-exclamation text-red-500 text-xl animate-bounce";
+                        }
                     } else {
-                        if (globalPauseBanner) globalPauseBanner.classList.add('hidden');
+                        // Меняем статус в карточках
                         if (sysStatusText) {
                             sysStatusText.className = "text-lg font-bold text-green-400";
                             sysStatusText.innerText = "РАБОТАЕТ";
+                        }
+                        
+                        // Стилизуем HUD-баннер под ЗЕЛЕНУЮ рабочую тему
+                        if (hudBanner) {
+                            hudBanner.className = "side-hud bg-green-950/90 border-r-4 border-green-500 text-white p-4 flex items-center justify-between cursor-pointer select-none";
+                        }
+                        if (hudTitle) hudTitle.innerText = "СИСТЕМА АКТИВНА";
+                        if (hudDesc) hudDesc.innerText = "Все рассылки идут по графику";
+                        if (hudIcon) {
+                            hudIcon.className = "fa-solid fa-circle-check text-green-400 text-xl animate-pulse";
                         }
                     }
 
@@ -540,10 +597,10 @@ def dashboard():
                     const statPause = document.getElementById('ctrl-pause-status');
                     if (btnPause && statPause) {
                         if (data.is_paused) {
-                            btnPause.className = "w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg text-sm flex justify-between items-center transition";
+                            btnPause.className = "w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg text-sm flex justify-between items-center transition shadow";
                             statPause.innerText = "ВКЛЮЧИТЬ РАССЫЛКУ";
                         } else {
-                            btnPause.className = "w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg text-sm flex justify-between items-center transition";
+                            btnPause.className = "w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg text-sm flex justify-between items-center transition shadow";
                             statPause.innerText = "ПОСТАВИТЬ НА ПАУЗУ";
                         }
                     }
@@ -554,7 +611,6 @@ def dashboard():
                         if (uniqueCodes.length > 0) {
                             pausedListContainer.innerHTML = uniqueCodes.map(code => {
                                 const isChecked = data.paused_contracts.includes(code);
-                                // Безопасное экранирование двойных кавычек в data-атрибуте
                                 const safeCode = code.replace(/"/g, '&quot;');
                                 return `
                                     <label class="flex items-center justify-between bg-[#100b0b] p-2 rounded border border-red-950/40 cursor-pointer select-none">
