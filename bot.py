@@ -381,6 +381,7 @@ def dashboard():
         <script>
             let currentTab = 'monitoring';
             let contractRate = 300; 
+            let isUpdating = false; // Флаг для предотвращения наложения запросов обновления
 
             function switchTab(tabName) {
                 currentTab = tabName;
@@ -457,16 +458,30 @@ def dashboard():
                 document.getElementById('res-employee-sum').innerText = employeeSum.toLocaleString() + ' $';
             }
 
-            async function toggleContractPause(contractCode) {
-                await fetch('/api/toggle-contract-pause', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ code: contractCode })
-                });
-                updateStats();
+            async function toggleContractPause(contractCode, checkboxElement) {
+                // Приостанавливаем фоновое обновление данных, чтобы оно не перезаписало состояние до завершения запроса
+                isUpdating = true;
+                checkboxElement.disabled = true;
+
+                try {
+                    await fetch('/api/toggle-contract-pause', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ code: contractCode })
+                    });
+                } catch (e) {
+                    console.error("Ошибка при переключении паузы:", e);
+                } finally {
+                    // Разрешаем автообновление и принудительно синхронизируем интерфейс
+                    isUpdating = false;
+                    await updateStats(true); 
+                }
             }
 
-            async function updateStats() {
+            async function updateStats(force = false) {
+                // Если сейчас идет отправка запроса на переключение, пропускаем фоновый цикл обновлений
+                if (isUpdating && !force) return;
+
                 try {
                     const response = await fetch('/api/stats');
                     const data = await response.json();
@@ -499,12 +514,13 @@ def dashboard():
                     const pausedListContainer = document.getElementById('paused-contracts-list');
                     if (pausedListContainer) {
                         if (uniqueCodes.length > 0) {
+                            // Собираем элементы списка. Клик передает "this" в качестве второго параметра
                             pausedListContainer.innerHTML = uniqueCodes.map(code => {
                                 const isChecked = data.paused_contracts.includes(code);
                                 return `
                                     <label class="flex items-center justify-between bg-[#100b0b] p-2 rounded border border-red-950/40 cursor-pointer select-none">
                                         <span class="text-xs text-gray-300 font-semibold">${code}</span>
-                                        <input type="checkbox" onchange="toggleContractPause('${code}')" ${isChecked ? 'checked' : ''} class="w-4 h-4 rounded bg-[#0f0a0a] border-red-900 text-red-600 focus:ring-0">
+                                        <input type="checkbox" onchange="toggleContractPause('${code}', this)" ${isChecked ? 'checked' : ''} class="w-4 h-4 rounded bg-[#0f0a0a] border-red-900 text-red-600 focus:ring-0">
                                     </label>
                                 `;
                             }).join('');
@@ -562,13 +578,24 @@ def dashboard():
                     } else {
                         tableBody.innerHTML = '<tr><td colspan="5" class="text-center py-8 text-gray-500">Нет контрактов в базе</td></tr>';
                     }
-                } catch (e) {}
+                } catch (e) {
+                    console.error("Ошибка обновления статистики:", e);
+                }
             }
 
-            async function togglePause() { await fetch('/api/toggle-pause', { method: 'POST' }); updateStats(); }
+            async function togglePause() { 
+                isUpdating = true;
+                try {
+                    await fetch('/api/toggle-pause', { method: 'POST' }); 
+                } finally {
+                    isUpdating = false;
+                    updateStats(true); 
+                }
+            }
 
-            setInterval(updateStats, 2000);
-            updateStats();
+            // Фоновое обновление каждые 2 секунды
+            setInterval(() => updateStats(false), 2000);
+            updateStats(true);
         </script>
     </body>
     </html>
