@@ -175,72 +175,97 @@ def dashboard():
         <style>
             body { background-color: #0f0a0a; color: #e5e5e5; font-family: sans-serif; }
             .glow-card { box-shadow: 0 4px 20px rgba(220, 38, 38, 0.15); border: 1px solid rgba(220, 38, 38, 0.2); }
-            .tab-active { border-bottom: 2px solid #ef4444; color: #ef4444; }
             
-            /* Стили для выезжающего бокового HUD-баннера слева */
-            .side-hud {
+            /* Единый стиль для боковых выезжающих плашек */
+            .side-bar-menu {
                 position: fixed;
-                left: -240px; /* Скрыт по умолчанию, виден только кончик */
-                top: 50%;
-                transform: translateY(-50%);
-                width: 300px;
-                height: 90px;
+                left: 0;
+                top: 25%;
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
                 z-index: 9999;
-                transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-                border-radius: 0 12px 12px 0;
-                box-shadow: 5px 0 25px rgba(0, 0, 0, 0.6);
             }
             
-            /* Наведение: плавно выдвигаем плашку вправо и немного увеличиваем */
-            .side-hud:hover {
+            .side-tab {
+                position: relative;
+                left: -220px; /* Скрываем текстовую часть */
+                width: 280px;
+                height: 54px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.2);
+                border-radius: 0 8px 8px 0;
+                box-shadow: 4px 2px 15px rgba(0, 0, 0, 0.5);
+                cursor: pointer;
+                user-select: none;
+            }
+            
+            /* Эффект выезжания при наведении */
+            .side-tab:hover {
                 left: 0px;
-                transform: translateY(-50%) scale(1.05);
+                transform: scale(1.03);
+            }
+            
+            /* Активное состояние для вкладок навигации */
+            .side-tab-active {
+                border-right: 4px solid #ef4444 !important;
+                background-color: #241414 !important;
             }
         </style>
     </head>
-    <body class="min-h-screen flex flex-col pb-10">
+    <body class="min-h-screen flex flex-col pb-10 pl-16"> <!-- Отступ слева под плашки меню -->
 
-        <!-- ВЫЕЗЖАЮЩАЯ БОКОВАЯ ПЛАШКА СЛЕВА (HUD) -->
-        <div id="left-hud-banner" onclick="handleHudClick()" class="side-hud bg-green-950/90 border-r-4 border-green-500 text-white p-4 flex items-center justify-between cursor-pointer select-none">
-            <div class="flex flex-col justify-center flex-grow pr-3">
-                <span id="hud-title" class="font-bold text-xs tracking-wider text-green-400">СИСТЕМА АКТИВНА</span>
-                <span id="hud-desc" class="text-[11px] text-gray-300 mt-0.5">Все рассылки идут по графику</span>
-                {% if session.get('authorized') %}
-                <span class="text-[9px] text-gray-400 mt-1 italic hover:underline">Нажми, чтобы поставить паузу</span>
-                {% endif %}
+        <!-- БОКОВОЕ МЕНЮ ИЗ ВЫЕЗЖАЮЩИХ ПЛАШЕК -->
+        <div class="side-bar-menu">
+            
+            <!-- Шаблон плашки: МОНИТОРИНГ -->
+            <div id="side-tab-monitoring" onclick="switchTab('monitoring')" class="side-tab side-tab-active bg-[#1c1212] border-r-4 border-red-500/30 hover:border-red-500 text-white p-3">
+                <span class="font-bold text-xs tracking-wider text-gray-300 pl-4">МОНИТОРИНГ</span>
+                <div class="w-12 h-full flex items-center justify-center border-l border-white/5">
+                    <i class="fa-solid fa-chart-line text-red-500 text-lg"></i>
+                </div>
             </div>
-            <!-- Видимый кончик плашки, который манит навести курсор -->
-            <div class="w-12 h-full flex flex-col items-center justify-center border-l border-white/10 pl-2">
-                <i id="hud-icon" class="fa-solid fa-circle-check text-green-400 text-xl animate-pulse"></i>
-                <span class="text-[8px] text-gray-400 mt-1 uppercase font-semibold">HUD</span>
+
+            <!-- Шаблон плашки: КАЛЬКУЛЯТОР -->
+            <div id="side-tab-calculator" onclick="switchTab('calculator')" class="side-tab bg-[#1c1212] border-r-4 border-red-500/30 hover:border-red-500 text-white p-3">
+                <span class="font-bold text-xs tracking-wider text-gray-300 pl-4">КАЛЬКУЛЯТОР</span>
+                <div class="w-12 h-full flex items-center justify-center border-l border-white/5">
+                    <i class="fa-solid fa-calculator text-red-500 text-lg"></i>
+                </div>
             </div>
+
+            <!-- Шаблон плашки: УПРАВЛЕНИЕ ПАУЗАМИ (Только для админов) -->
+            {% if session.get('authorized') %}
+            <div onclick="openControlModal()" class="side-tab bg-[#1c1212] border-r-4 border-red-500/30 hover:border-red-500 text-white p-3">
+                <span class="font-bold text-xs tracking-wider text-red-400 pl-4">УПРАВЛЕНИЕ ПАУЗАМИ</span>
+                <div class="w-12 h-full flex items-center justify-center border-l border-white/5">
+                    <i class="fa-solid fa-sliders text-red-500 text-lg"></i>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Шаблон плашки: СТАТУС БОТА (Клик по ней также переключает паузу, если админ) -->
+            <div id="left-hud-banner" onclick="handleHudClick()" class="side-tab bg-green-950/90 border-r-4 border-green-500 text-white p-3">
+                <div class="flex flex-col justify-center pl-4 flex-grow">
+                    <span id="hud-title" class="font-bold text-[11px] tracking-wider text-green-400">СИСТЕМА АКТИВНА</span>
+                    <span id="hud-desc" class="text-[9px] text-gray-400">Все идет по графику</span>
+                </div>
+                <div class="w-12 h-full flex items-center justify-center border-l border-white/5">
+                    <i id="hud-icon" class="fa-solid fa-circle-check text-green-400 text-lg animate-pulse"></i>
+                </div>
+            </div>
+
         </div>
 
-        <!-- Шапка (теперь зафиксирована ровно на самом верху без сдвигов) -->
+        <!-- Шапка (Очищена от лишних кнопок, содержит только лого и авторизацию) -->
         <header class="bg-[#1a1313] border-b border-red-900/40 p-4 sticky top-0 z-50 shadow-lg">
             <div class="max-w-6xl mx-auto flex justify-between items-center">
-                <div class="flex items-center space-x-6">
-                    <h1 class="text-xl font-bold text-red-500 flex items-center space-x-2">
-                        <i class="fa-solid fa-file-invoice-dollar"></i>
-                        <span>Secretary Alice</span>
-                    </h1>
-                    
-                    <nav class="hidden md:flex space-x-4">
-                        <button onclick="switchTab('monitoring')" id="tab-monitoring" class="py-1 px-3 text-sm font-semibold transition tab-active">
-                            Мониторинг
-                        </button>
-                        <button onclick="switchTab('calculator')" id="tab-calculator" class="py-1 px-3 text-sm font-semibold text-gray-400 hover:text-white transition">
-                            Калькулятор
-                        </button>
-                    </nav>
-
-                    {% if session.get('authorized') %}
-                    <button onclick="openControlModal()" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-1.5 px-4 rounded text-xs transition shadow flex items-center space-x-1.5">
-                        <i class="fa-solid fa-sliders"></i>
-                        <span>Управление паузами</span>
-                    </button>
-                    {% endif %}
-                </div>
+                <h1 class="text-xl font-bold text-red-500 flex items-center space-x-2">
+                    <i class="fa-solid fa-file-invoice-dollar"></i>
+                    <span>Secretary Alice</span>
+                </h1>
 
                 <div class="flex items-center space-x-4">
                     {% if session.get('authorized') %}
@@ -435,19 +460,19 @@ def dashboard():
 
             function switchTab(tabName) {
                 currentTab = tabName;
-                const tabMon = document.getElementById('tab-monitoring');
-                const tabCalc = document.getElementById('tab-calculator');
+                const tabMon = document.getElementById('side-tab-monitoring');
+                const tabCalc = document.getElementById('side-tab-calculator');
                 const secMon = document.getElementById('section-monitoring');
                 const secCalc = document.getElementById('section-calculator');
 
                 if (tabName === 'monitoring') {
-                    tabMon.className = "py-1 px-3 text-sm font-semibold transition tab-active";
-                    tabCalc.className = "py-1 px-3 text-sm font-semibold text-gray-400 hover:text-white transition";
+                    tabMon.classList.add('side-tab-active');
+                    tabCalc.classList.remove('side-tab-active');
                     secMon.classList.remove('hidden');
                     secCalc.classList.add('hidden');
                 } else {
-                    tabMon.className = "py-1 px-3 text-sm font-semibold text-gray-400 hover:text-white transition";
-                    tabCalc.className = "py-1 px-3 text-sm font-semibold transition tab-active";
+                    tabMon.classList.remove('side-tab-active');
+                    tabCalc.classList.add('side-tab-active');
                     secMon.classList.add('hidden');
                     secCalc.classList.remove('hidden');
                 }
@@ -537,7 +562,6 @@ def dashboard():
                 }
             }
 
-            // Обработка клика по боковому баннеру (доступна только для админов)
             async function handleHudClick() {
                 if (!isAuthorized) return;
                 await togglePause();
@@ -560,36 +584,32 @@ def dashboard():
                     const hudIcon = document.getElementById('hud-icon');
 
                     if (data.is_paused) {
-                        // Меняем статус в карточках
                         if (sysStatusText) {
                             sysStatusText.className = "text-lg font-bold text-red-500";
                             sysStatusText.innerText = "НА ПАУЗЕ";
                         }
                         
-                        // Стилизуем HUD-баннер под КРАСНУЮ аварийную тему
                         if (hudBanner) {
-                            hudBanner.className = "side-hud bg-red-950/90 border-r-4 border-red-500 text-white p-4 flex items-center justify-between cursor-pointer select-none";
+                            hudBanner.className = "side-tab bg-red-950/90 border-r-4 border-red-500 text-white p-3";
                         }
                         if (hudTitle) hudTitle.innerText = "РАССЫЛКА НА ПАУЗЕ";
-                        if (hudDesc) hudDesc.innerText = "Автоматические выходы остановлены";
+                        if (hudDesc) hudDesc.innerText = "Рассылки остановлены";
                         if (hudIcon) {
-                            hudIcon.className = "fa-solid fa-triangle-exclamation text-red-500 text-xl animate-bounce";
+                            hudIcon.className = "fa-solid fa-triangle-exclamation text-red-500 text-lg animate-bounce";
                         }
                     } else {
-                        // Меняем статус в карточках
                         if (sysStatusText) {
                             sysStatusText.className = "text-lg font-bold text-green-400";
                             sysStatusText.innerText = "РАБОТАЕТ";
                         }
                         
-                        // Стилизуем HUD-баннер под ЗЕЛЕНУЮ рабочую тему
                         if (hudBanner) {
-                            hudBanner.className = "side-hud bg-green-950/90 border-r-4 border-green-500 text-white p-4 flex items-center justify-between cursor-pointer select-none";
+                            hudBanner.className = "side-tab bg-green-950/90 border-r-4 border-green-500 text-white p-3";
                         }
                         if (hudTitle) hudTitle.innerText = "СИСТЕМА АКТИВНА";
-                        if (hudDesc) hudDesc.innerText = "Все рассылки идут по графику";
+                        if (hudDesc) hudDesc.innerText = "Все идет по графику";
                         if (hudIcon) {
-                            hudIcon.className = "fa-solid fa-circle-check text-green-400 text-xl animate-pulse";
+                            hudIcon.className = "fa-solid fa-circle-check text-green-400 text-lg animate-pulse";
                         }
                     }
 
