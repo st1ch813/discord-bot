@@ -11,7 +11,6 @@ from flask import Flask, render_template_string, jsonify, request, session, redi
 
 # ================= НАСТРОЙКИ БОТА =================
 ROLE_ID = "1447219553259094219"
-# Тщательно очищаем ID от любых невидимых символов, кавычек и пробелов
 SHEET_ID = "1B8Ts_DHQ11878tw1Qa8mUdjxFdCb249v78R10n9czBw".strip().replace("'", "").replace('"', "").replace(" ", "")
 # ==================================================
 
@@ -24,8 +23,15 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "WN063")
 
 system_state = {
     "is_paused": False,
-    "paused_contracts": []  # Список кодовых названий контрактов, которые сейчас приостановлены
+    "paused_contracts": []  # Список кодовых названий контрактов на паузе
 }
+
+# Кэш для Google таблицы, чтобы избежать задержек при частых запросах к API
+db_cache = {
+    "data": [],
+    "last_updated": None
+}
+CACHE_TIMEOUT_SECONDS = 30 
 
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 
@@ -35,18 +41,23 @@ def format_money(value):
 def get_msk_time():
     return datetime.utcnow() + timedelta(hours=3)
 
-def parse_database():
+def parse_database(force_update=False):
+    now = get_msk_time()
+    
+    # Если кэш еще свежий, отдаем данные из него (это убирает задержки в 1-2 секунды на запрос)
+    if not force_update and db_cache["last_updated"] and (now - db_cache["last_updated"]).total_seconds() < CACHE_TIMEOUT_SECONDS:
+        return db_cache["data"]
+
     contracts = []
     clean_sheet_id = SHEET_ID.strip().replace("'", "").replace('"', "").replace(" ", "")
     export_url = f"https://docs.google.com/spreadsheets/d/{clean_sheet_id}/export?format=csv&gid=0".strip()
-    now = get_msk_time()
     
     try:
         logger.info(f"Запрос к Google Таблице по адресу: '{export_url}'")
-        response = requests.get(export_url, timeout=10)
+        response = requests.get(export_url, timeout=5)
         if response.status_code != 200:
             logger.error(f"Не удалось скачать Google Таблицу. Статус: {response.status_code}")
-            return contracts
+            return db_cache["data"] if db_cache["data"] else contracts
             
         csv_data = response.content.decode('utf-8').splitlines()
         reader = csv.reader(csv_data)
@@ -55,8 +66,6 @@ def parse_database():
             if len(row) < 3:
                 continue
             times_str, text, date_range = row[0], row[1], row[2]
-            
-            # Читаем четвертую колонку (кодовое имя). Если ее нет или она пустая — пишем "Без названия"
             contract_code = row[3].strip() if len(row) > 3 and row[3].strip() else "Без названия"
             
             if "время" in times_str.lower() or "текст" in text.lower():
@@ -88,10 +97,17 @@ def parse_database():
                     "text": clean_text,
                     "date_range": date_range.strip(),
                     "date_status": date_status,
-                    "code": contract_code  # Сохраняем код контракта в базу
+                    "code": contract_code
                 })
+        
+        # Обновляем кэш
+        db_cache["data"] = contracts
+        db_cache["last_updated"] = now
+        
     except Exception as e:
         logger.error(f"Ошибка при импорте/парсинге Google Таблицы: {e}")
+        if db_cache["data"]:
+            return db_cache["data"]
     
     return contracts
 
@@ -126,7 +142,6 @@ def get_next_contract_info():
                 if t_datetime < now:
                     t_datetime += timedelta(days=1)
                 
-                # Проверяем, на паузе ли конкретно этот контракт по его кодовому названию
                 is_skipped = (contract["code"] != "Без названия" and contract["code"] in system_state["paused_contracts"])
                 
                 upcoming_contracts.append({
@@ -381,7 +396,7 @@ def dashboard():
         <script>
             let currentTab = 'monitoring';
             let contractRate = 300; 
-            let isUpdating = false; // Флаг для предотвращения наложения запросов обновления
+            let isUpdating = false; 
 
             function switchTab(tabName) {
                 currentTab = tabName;
@@ -426,6 +441,7 @@ def dashboard():
                 }
             }
 
+            // Плавное изменение количества стрелочками
             function adjustCount(inputId, amount) {
                 const input = document.getElementById(inputId);
                 const max = parseInt(input.max);
@@ -459,27 +475,33 @@ def dashboard():
             }
 
             async function toggleContractPause(contractCode, checkboxElement) {
-                // Приостанавливаем фоновое обновление данных, чтобы оно не перезаписало состояние до завершения запроса
+                // Блокируем фоновое авто-обновление и сам чекбокс, чтобы избежать багов синхронизации
                 isUpdating = true;
                 checkboxElement.disabled = true;
 
                 try {
-                    await fetch('/api/toggle-contract-pause', {
+                    const response = await fetch('/api/toggle-contract-pause', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ code: contractCode })
                     });
+                    
+                    if (response.ok) {
+                        // Меняем статус визуально мгновенно на фронтенде без ожидания ответа от stats
+                        checkboxElement.checked = !checkboxElement.checked;
+                    }
                 } catch (e) {
-                    console.error("Ошибка при переключении паузы:", e);
+                    console.error("Ошибка при изменении состояния паузы:", e);
                 } finally {
-                    // Разрешаем автообновление и принудительно синхронизируем интерфейс
-                    isUpdating = false;
-                    await updateStats(true); 
+                    // Задержка в 300мс гарантирует, что сервер успел сохранить стейт до отправки нового GET-запроса
+                    setTimeout(async () => {
+                        isUpdating = false;
+                        await updateStats(true);
+                    }, 300);
                 }
             }
 
             async function updateStats(force = false) {
-                // Если сейчас идет отправка запроса на переключение, пропускаем фоновый цикл обновлений
                 if (isUpdating && !force) return;
 
                 try {
@@ -514,13 +536,13 @@ def dashboard():
                     const pausedListContainer = document.getElementById('paused-contracts-list');
                     if (pausedListContainer) {
                         if (uniqueCodes.length > 0) {
-                            // Собираем элементы списка. Клик передает "this" в качестве второго параметра
+                            // Отрисовка списка. onchange теперь НЕ меняет checked сам по себе сразу (это делается в toggleContractPause)
                             pausedListContainer.innerHTML = uniqueCodes.map(code => {
                                 const isChecked = data.paused_contracts.includes(code);
                                 return `
                                     <label class="flex items-center justify-between bg-[#100b0b] p-2 rounded border border-red-950/40 cursor-pointer select-none">
                                         <span class="text-xs text-gray-300 font-semibold">${code}</span>
-                                        <input type="checkbox" onchange="toggleContractPause('${code}', this)" ${isChecked ? 'checked' : ''} class="w-4 h-4 rounded bg-[#0f0a0a] border-red-900 text-red-600 focus:ring-0">
+                                        <input type="checkbox" onchange="toggleContractPause('${code}', this); return false;" ${isChecked ? 'checked' : ''} class="w-4 h-4 rounded bg-[#0f0a0a] border-red-900 text-red-600 focus:ring-0">
                                     </label>
                                 `;
                             }).join('');
@@ -588,12 +610,14 @@ def dashboard():
                 try {
                     await fetch('/api/toggle-pause', { method: 'POST' }); 
                 } finally {
-                    isUpdating = false;
-                    updateStats(true); 
+                    setTimeout(() => {
+                        isUpdating = false;
+                        updateStats(true); 
+                    }, 300);
                 }
             }
 
-            // Фоновое обновление каждые 2 секунды
+            // Фоновое авто-обновление раз в 2 секунды
             setInterval(() => updateStats(false), 2000);
             updateStats(true);
         </script>
