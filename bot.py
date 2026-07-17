@@ -167,6 +167,7 @@ def dashboard():
     </head>
     <body class="min-h-screen flex flex-col pb-10">
 
+        <!-- Шапка -->
         <header class="bg-[#1a1313] border-b border-red-900/40 p-4 sticky top-0 z-50 shadow-lg">
             <div class="max-w-6xl mx-auto flex justify-between items-center">
                 <div class="flex items-center space-x-6">
@@ -210,6 +211,7 @@ def dashboard():
 
         <main class="max-w-6xl w-full mx-auto px-4 mt-8 flex-grow">
             
+            <!-- ВКЛАДКА: МОНИТОРИНГ -->
             <div id="section-monitoring" class="space-y-6">
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div class="bg-[#181111] glow-card rounded-lg p-5 flex items-center justify-between">
@@ -245,7 +247,7 @@ def dashboard():
                         <table class="w-full text-left border-collapse table-auto">
                             <thead>
                                 <tr class="border-b border-red-900/40 text-gray-400 text-xs uppercase">
-                                    <th class="py-3 px-4 w-[150px]">Код</th>
+                                    <th class="py-3 px-4 whitespace-nowrap">Код</th>
                                     <th class="py-3 px-4 w-[220px]">Время</th>
                                     <th class="py-3 px-4 w-full">Текст контракта</th>
                                     <th class="py-3 px-4 whitespace-nowrap">Срок действия</th>
@@ -260,6 +262,7 @@ def dashboard():
                 </div>
             </div>
 
+            <!-- ВКЛАДКА: КАЛЬКУЛЯТОР -->
             <div id="section-calculator" class="hidden space-y-6">
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div class="lg:col-span-2 bg-[#181111] glow-card rounded-lg p-6 space-y-4">
@@ -284,18 +287,18 @@ def dashboard():
                                 </div>
                             </div>
                             <div>
-                                <label class="block text-xs uppercase text-gray-400 mb-2">Сообщений в день</label>
+                                <label class="block text-xs uppercase text-gray-400 mb-2">Сообщений в день (макс. 10)</label>
                                 <div class="flex items-center h-[42px] bg-[#100b0b] border border-red-950 rounded-lg overflow-hidden">
                                     <button onclick="adjustCount('calc-msg-per-day', -1)" class="w-10 h-full text-gray-400 hover:text-white font-bold text-base">-</button>
-                                    <input type="number" id="calc-msg-per-day" value="1" min="1" oninput="calculateContract()" class="flex-grow bg-transparent text-center text-sm font-bold text-white focus:outline-none">
+                                    <input type="number" id="calc-msg-per-day" value="1" min="1" max="10" oninput="validateLimits(this); calculateContract();" class="flex-grow bg-transparent text-center text-sm font-bold text-white focus:outline-none">
                                     <button onclick="adjustCount('calc-msg-per-day', 1)" class="w-10 h-full text-gray-400 hover:text-white font-bold text-base">+</button>
                                 </div>
                             </div>
                             <div>
-                                <label class="block text-xs uppercase text-gray-400 mb-2">Количество дней</label>
+                                <label class="block text-xs uppercase text-gray-400 mb-2">Количество дней (макс. 7)</label>
                                 <div class="flex items-center h-[42px] bg-[#100b0b] border border-red-950 rounded-lg overflow-hidden">
                                     <button onclick="adjustCount('calc-days', -1)" class="w-10 h-full text-gray-400 hover:text-white font-bold text-base">-</button>
-                                    <input type="number" id="calc-days" value="7" min="1" oninput="calculateContract()" class="flex-grow bg-transparent text-center text-sm font-bold text-white focus:outline-none">
+                                    <input type="number" id="calc-days" value="7" min="1" max="7" oninput="validateLimits(this); calculateContract();" class="flex-grow bg-transparent text-center text-sm font-bold text-white focus:outline-none">
                                     <button onclick="adjustCount('calc-days', 1)" class="w-10 h-full text-gray-400 hover:text-white font-bold text-base">+</button>
                                 </div>
                             </div>
@@ -329,6 +332,7 @@ def dashboard():
             </div>
         </main>
 
+        <!-- Модалка входа -->
         <div id="login-modal" class="hidden fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
             <div class="bg-[#181111] border border-red-900/60 rounded-xl max-w-sm w-full p-6 space-y-4">
                 <div class="flex justify-between items-center">
@@ -342,6 +346,7 @@ def dashboard():
             </div>
         </div>
 
+        <!-- Модалка управления паузами -->
         <div id="control-modal" class="hidden fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
             <div class="bg-[#181111] border border-red-900/60 rounded-xl max-w-md w-full p-6 space-y-4">
                 <div class="flex justify-between items-center">
@@ -350,6 +355,7 @@ def dashboard():
                 </div>
                 
                 <div class="space-y-4">
+                    <!-- Глобальная пауза -->
                     <div>
                         <p class="text-xs text-gray-400 uppercase mb-2">Глобальное состояние</p>
                         <button id="ctrl-btn-pause" onclick="togglePause()" class="w-full text-white font-bold py-2 px-4 rounded-lg text-sm flex justify-between items-center shadow">
@@ -357,6 +363,7 @@ def dashboard():
                         </button>
                     </div>
 
+                    <!-- Пауза конкретных контрактов -->
                     <div>
                         <p class="text-xs text-gray-400 uppercase mb-2">Приостановка по кодовому названию</p>
                         <div id="paused-contracts-list" class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
@@ -407,10 +414,27 @@ def dashboard():
                 calculateContract();
             }
 
+            function validateLimits(input) {
+                const val = parseInt(input.value) || 0;
+                const max = parseInt(input.max);
+                const min = parseInt(input.min) || 1;
+                if (val > max) {
+                    input.value = max;
+                } else if (val < min && input.value !== "") {
+                    input.value = min;
+                }
+            }
+
             function adjustCount(inputId, amount) {
                 const input = document.getElementById(inputId);
-                let val = (parseInt(input.value) || 1) + amount;
-                input.value = val < 1 ? 1 : val;
+                const max = parseInt(input.max);
+                const min = parseInt(input.min) || 1;
+                let val = (parseInt(input.value) || min) + amount;
+                
+                if (val > max) val = max;
+                if (val < min) val = min;
+                
+                input.value = val;
                 calculateContract();
             }
 
@@ -450,7 +474,6 @@ def dashboard():
                     document.getElementById('server-time').innerText = data.server_time;
                     document.getElementById('total-contracts-count').innerText = data.total_contracts;
                     
-                    // Общий статус системы
                     const sysStatusText = document.getElementById('system-status-text');
                     if (data.is_paused) {
                         sysStatusText.className = "text-lg font-bold text-red-500";
@@ -472,7 +495,6 @@ def dashboard():
                         }
                     }
 
-                    // Список паузы в модалке (только уникальные коды контрактов, исключая "Без названия")
                     const uniqueCodes = [...new Set(data.all_contracts.map(c => c.code))].filter(code => code && code !== "Без названия");
                     const pausedListContainer = document.getElementById('paused-contracts-list');
                     if (pausedListContainer) {
@@ -491,14 +513,14 @@ def dashboard():
                         }
                     }
 
-                    // Следующий контракт
                     const nextContainer = document.getElementById('next-contract-container');
                     if (data.next_contract) {
                         const nc = data.next_contract;
                         let badge = nc.is_skipped ? '<span class="bg-red-900/60 text-red-300 text-[10px] px-2 py-0.5 rounded whitespace-nowrap">НА ПАУЗЕ</span>' : `<span class="bg-yellow-900/40 text-yellow-500 text-[10px] px-2 py-0.5 rounded whitespace-nowrap">ЧЕРЕЗ ${nc.time_left}</span>`;
+                        let codeLabel = nc.code !== "Без названия" ? ` — <i>[${nc.code}]</i>` : '';
                         nextContainer.innerHTML = `
                             <div class="flex justify-between text-xs text-gray-400 border-b border-red-900/10 pb-2">
-                                <span>Слот: <strong>${nc.time_str} МСК</strong> (${nc.date_range}) — <i>[${nc.code}]</i></span>${badge}
+                                <span>Слот: <strong>${nc.time_str} МСК</strong> (${nc.date_range})${codeLabel}</span>${badge}
                             </div>
                             <div class="bg-[#100b0b] p-3 rounded border border-red-950 ${nc.is_skipped ? 'line-through text-gray-500' : 'text-gray-200'} text-sm">${nc.text}</div>
                         `;
@@ -506,14 +528,12 @@ def dashboard():
                         nextContainer.innerHTML = '<div class="text-center text-gray-500 text-sm">Нет active-контрактов</div>';
                     }
 
-                    // Таблица всех контрактов
                     const tableBody = document.getElementById('contracts-table-body');
                     if (data.all_contracts && data.all_contracts.length > 0) {
                         tableBody.innerHTML = data.all_contracts.map(c => {
                             let statusBadge = '<span class="inline-block bg-green-950/60 text-green-400 border border-green-900/60 text-[10px] font-bold px-2.5 py-1 rounded">Активен</span>';
                             let rowClass = "hover:bg-red-950/5";
                             
-                            // Проверяем статус индивидуальной паузы
                             const isIndividualPaused = data.paused_contracts.includes(c.code);
                             
                             if (isIndividualPaused) {
@@ -527,10 +547,11 @@ def dashboard():
                             }
 
                             let timeBadges = c.times.map(t => `<span class="inline-block bg-[#261616] text-red-400 border border-red-950 text-xs px-2 py-0.5 rounded font-mono shadow-sm">${t}</span>`).join(' ');
+                            let formattedCode = c.code !== "Без названия" ? `[${c.code}]` : '—';
 
                             return `
                                 <tr class="${rowClass}">
-                                    <td class="py-3 px-4 font-semibold text-red-400 text-xs break-all">[${c.code}]</td>
+                                    <td class="py-3 px-4 font-semibold text-red-400 text-xs whitespace-nowrap">${formattedCode}</td>
                                     <td class="py-3 px-4"><div class="flex flex-wrap gap-1.5 max-w-[210px]">${timeBadges}</div></td>
                                     <td class="py-3 px-4 text-gray-300 break-words max-w-xs md:max-w-xl">${c.text}</td>
                                     <td class="py-3 px-4 text-gray-400 whitespace-nowrap">${c.date_range}</td>
@@ -634,9 +655,7 @@ async def schedule_loop():
                     for contract in parse_database():
                         if contract["date_status"] == "expired":
                             continue
-                        # Если время совпадает
                         if current_time_str in contract["times"]:
-                            # Проверяем, не стоит ли данный контракт на индивидуальной паузе
                             if contract["code"] not in system_state["paused_contracts"]:
                                 send_discord_webhook(contract["text"])
                 last_sent_minute = now.minute
