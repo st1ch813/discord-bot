@@ -287,13 +287,8 @@ def dashboard():
             
             <!-- ВКЛАДКА: МОНИТОРИНГ -->
             <div id="section-monitoring" class="space-y-6">
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div class="bg-[#181111] glow-card rounded-lg p-5 flex items-center justify-between">
-                        <div>
-                            <p class="text-gray-400 text-xs uppercase">Общий статус</p>
-                            <p id="system-status-text" class="text-lg font-bold">РАБОТАЕТ</p>
-                        </div>
-                    </div>
+                <!-- Сетка без "Общего статуса" стала двухколоночной -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div class="bg-[#181111] glow-card rounded-lg p-5 flex items-center justify-between">
                         <div>
                             <p class="text-gray-400 text-xs uppercase">Время МСК</p>
@@ -420,34 +415,48 @@ def dashboard():
             </div>
         </div>
 
-        <!-- Модалка управления паузами -->
-        <div id="control-modal" class="hidden fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
-            <div class="bg-[#181111] border border-red-900/60 rounded-xl max-w-md w-full p-6 space-y-4">
-                <div class="flex justify-between items-center">
-                    <h3 class="text-white font-bold">Управление контрактами</h3>
-                    <button onclick="closeControlModal()" class="text-gray-500 hover:text-white">&times;</button>
+        <!-- КРАСИВАЯ МОДАЛКА УПРАВЛЕНИЯ ПАУЗАМИ (HUD СТИЛЬ) -->
+        <div id="control-modal" class="hidden fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-[#100b0b] border border-red-500/30 shadow-[0_0_25px_rgba(239,68,68,0.15)] rounded-xl max-w-md w-full p-6 space-y-6">
+                
+                <!-- Заголовок -->
+                <div class="flex justify-between items-center border-b border-red-950/60 pb-3">
+                    <div class="flex items-center space-x-2">
+                        <i class="fa-solid fa-sliders text-red-500"></i>
+                        <h3 class="text-white font-bold text-sm tracking-wider uppercase">Панель управления</h3>
+                    </div>
+                    <button onclick="closeControlModal()" class="text-gray-500 hover:text-red-400 transition text-lg">&times;</button>
                 </div>
                 
-                <div class="space-y-4">
-                    <!-- Глобальная пауза -->
+                <div class="space-y-5">
+                    <!-- Глобальная пауза (оформлена как наш HUD-элемент) -->
                     <div>
-                        <p class="text-xs text-gray-400 uppercase mb-2">Глобальное состояние</p>
-                        <button id="ctrl-btn-pause" onclick="togglePause()" class="w-full text-white font-bold py-2 px-4 rounded-lg text-sm flex justify-between items-center shadow">
-                            <span>Общая пауза</span><span id="ctrl-pause-status">...</span>
-                        </button>
+                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-2 font-bold">Глобальный статус системы</p>
+                        <div id="ctrl-btn-pause" onclick="togglePause()" class="w-full h-[54px] flex items-center justify-between bg-[#1c1212] border-r-4 border-red-500/30 hover:border-red-500 text-white rounded cursor-pointer select-none transition-all duration-300">
+                            <div class="flex flex-col justify-center pl-4 flex-grow">
+                                <span id="ctrl-pause-title" class="font-bold text-[11px] tracking-wider text-gray-300">СИСТЕМА РАБОТАЕТ</span>
+                                <span id="ctrl-pause-desc" class="text-[9px] text-gray-400">Нажмите, чтобы приостановить рассылку</span>
+                            </div>
+                            <div class="w-12 h-full flex items-center justify-center border-l border-white/5">
+                                <i id="ctrl-pause-icon" class="fa-solid fa-play text-emerald-400 text-base"></i>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Пауза конкретных контрактов -->
                     <div>
-                        <p class="text-xs text-gray-400 uppercase mb-2">Приостановка по кодовому названию</p>
-                        <div id="paused-contracts-list" class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-2 font-bold">Выборочная приостановка контрактов</p>
+                        <div id="paused-contracts-list" class="space-y-2 max-h-48 overflow-y-auto pr-1">
                             <p class="text-xs text-gray-500">Загрузка контрактов...</p>
                         </div>
                     </div>
 
-                    <a href="https://docs.google.com/spreadsheets/d/{{ sheet_id }}/edit?gid=0#gid=0" target="_blank" class="w-full bg-[#1b221d] text-emerald-400 font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center text-center">
-                        <span>Открыть Google Таблицу</span><i class="fa-solid fa-up-right-from-square"></i>
-                    </a>
+                    <!-- Нижние ссылки / Действия -->
+                    <div class="pt-3 border-t border-red-950/60 flex flex-col gap-2">
+                        <a href="https://docs.google.com/spreadsheets/d/{{ sheet_id }}/edit?gid=0#gid=0" target="_blank" class="w-full bg-[#1b221d] hover:bg-[#232c25] border border-emerald-900/40 text-emerald-400 font-bold py-2.5 px-4 rounded-lg text-xs flex justify-between items-center text-center transition">
+                            <span>Редактировать Google Таблицу</span><i class="fa-solid fa-up-right-from-square"></i>
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>
@@ -577,18 +586,18 @@ def dashboard():
                     document.getElementById('server-time').innerText = data.server_time;
                     document.getElementById('total-contracts-count').innerText = data.total_contracts;
                     
-                    const sysStatusText = document.getElementById('system-status-text');
                     const hudBanner = document.getElementById('left-hud-banner');
                     const hudTitle = document.getElementById('hud-title');
                     const hudDesc = document.getElementById('hud-desc');
                     const hudIcon = document.getElementById('hud-icon');
 
+                    // Обновление состояния HUD и модального окна управления
+                    const ctrlBtnPause = document.getElementById('ctrl-btn-pause');
+                    const ctrlTitle = document.getElementById('ctrl-pause-title');
+                    const ctrlDesc = document.getElementById('ctrl-pause-desc');
+                    const ctrlIcon = document.getElementById('ctrl-pause-icon');
+
                     if (data.is_paused) {
-                        if (sysStatusText) {
-                            sysStatusText.className = "text-lg font-bold text-red-500";
-                            sysStatusText.innerText = "НА ПАУЗЕ";
-                        }
-                        
                         if (hudBanner) {
                             hudBanner.className = "side-tab bg-red-950/90 border-r-4 border-red-500 text-white p-3";
                         }
@@ -597,12 +606,17 @@ def dashboard():
                         if (hudIcon) {
                             hudIcon.className = "fa-solid fa-triangle-exclamation text-red-500 text-lg animate-bounce";
                         }
-                    } else {
-                        if (sysStatusText) {
-                            sysStatusText.className = "text-lg font-bold text-green-400";
-                            sysStatusText.innerText = "РАБОТАЕТ";
+
+                        // Модалка: СИСТЕМА НА ПАУЗЕ
+                        if (ctrlBtnPause) {
+                            ctrlBtnPause.className = "w-full h-[54px] flex items-center justify-between bg-emerald-950/40 border-r-4 border-emerald-500 text-white rounded cursor-pointer select-none transition-all duration-300";
                         }
-                        
+                        if (ctrlTitle) ctrlTitle.innerText = "РАССЫЛКА НА ПАУЗЕ";
+                        if (ctrlDesc) ctrlDesc.innerText = "Нажмите, чтобы запустить рассылку";
+                        if (ctrlIcon) {
+                            ctrlIcon.className = "fa-solid fa-play text-emerald-400 text-base animate-pulse";
+                        }
+                    } else {
                         if (hudBanner) {
                             hudBanner.className = "side-tab bg-green-950/90 border-r-4 border-green-500 text-white p-3";
                         }
@@ -611,17 +625,15 @@ def dashboard():
                         if (hudIcon) {
                             hudIcon.className = "fa-solid fa-circle-check text-green-400 text-lg animate-pulse";
                         }
-                    }
 
-                    const btnPause = document.getElementById('ctrl-btn-pause');
-                    const statPause = document.getElementById('ctrl-pause-status');
-                    if (btnPause && statPause) {
-                        if (data.is_paused) {
-                            btnPause.className = "w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg text-sm flex justify-between items-center transition shadow";
-                            statPause.innerText = "ВКЛЮЧИТЬ РАССЫЛКУ";
-                        } else {
-                            btnPause.className = "w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg text-sm flex justify-between items-center transition shadow";
-                            statPause.innerText = "ПОСТАВИТЬ НА ПАУЗУ";
+                        // Модалка: СИСТЕМА АКТИВНА
+                        if (ctrlBtnPause) {
+                            ctrlBtnPause.className = "w-full h-[54px] flex items-center justify-between bg-red-950/40 border-r-4 border-red-500 text-white rounded cursor-pointer select-none transition-all duration-300";
+                        }
+                        if (ctrlTitle) ctrlTitle.innerText = "СИСТЕМА АКТИВНА";
+                        if (ctrlDesc) ctrlDesc.innerText = "Нажмите, чтобы приостановить рассылку";
+                        if (ctrlIcon) {
+                            ctrlIcon.className = "fa-solid fa-pause text-red-500 text-base";
                         }
                     }
 
@@ -633,7 +645,7 @@ def dashboard():
                                 const isChecked = data.paused_contracts.includes(code);
                                 const safeCode = code.replace(/"/g, '&quot;');
                                 return `
-                                    <label class="flex items-center justify-between bg-[#100b0b] p-2 rounded border border-red-950/40 cursor-pointer select-none">
+                                    <label class="flex items-center justify-between bg-[#181111] p-3 rounded border border-red-950/40 cursor-pointer select-none hover:border-red-500/20 transition-all duration-200">
                                         <span class="text-xs text-gray-300 font-semibold">${code}</span>
                                         <input type="checkbox" 
                                                data-code="${safeCode}" 
@@ -705,14 +717,14 @@ def dashboard():
             async function togglePause() { 
                 isUpdating = true;
                 const btnPause = document.getElementById('ctrl-btn-pause');
-                if (btnPause) btnPause.disabled = true;
+                if (btnPause) btnPause.style.pointerEvents = 'none';
 
                 try {
                     await fetch('/api/toggle-pause', { method: 'POST' }); 
                 } finally {
                     setTimeout(() => {
                         isUpdating = false;
-                        if (btnPause) btnPause.disabled = false;
+                        if (btnPause) btnPause.style.pointerEvents = 'auto';
                         updateStats(true); 
                     }, 300);
                 }
