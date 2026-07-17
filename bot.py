@@ -44,7 +44,6 @@ def get_msk_time():
 def parse_database(force_update=False):
     now = get_msk_time()
     
-    # Если кэш еще свежий, отдаем данные из него (это убирает задержки в 1-2 секунды на запрос)
     if not force_update and db_cache["last_updated"] and (now - db_cache["last_updated"]).total_seconds() < CACHE_TIMEOUT_SECONDS:
         return db_cache["data"]
 
@@ -100,7 +99,6 @@ def parse_database(force_update=False):
                     "code": contract_code
                 })
         
-        # Обновляем кэш
         db_cache["data"] = contracts
         db_cache["last_updated"] = now
         
@@ -182,8 +180,13 @@ def dashboard():
     </head>
     <body class="min-h-screen flex flex-col pb-10">
 
+        <!-- Глобальный HUD-баннер паузы -->
+        <div id="global-pause-banner" class="hidden bg-red-600 text-white text-center py-2 px-4 font-bold animate-pulse text-sm sticky top-0 z-[100] shadow-md">
+            <i class="fa-solid fa-triangle-exclamation mr-2 animate-bounce"></i> РАССЫЛКА ПРИОСТАНОВЛЕНА (ВКЛЮЧЕНА ОБЩАЯ ПАУЗА)
+        </div>
+
         <!-- Шапка -->
-        <header class="bg-[#1a1313] border-b border-red-900/40 p-4 sticky top-0 z-50 shadow-lg">
+        <header class="bg-[#1a1313] border-b border-red-900/40 p-4 sticky top-[38px] z-50 shadow-lg">
             <div class="max-w-6xl mx-auto flex justify-between items-center">
                 <div class="flex items-center space-x-6">
                     <h1 class="text-xl font-bold text-red-500 flex items-center space-x-2">
@@ -284,7 +287,7 @@ def dashboard():
                         <h2 class="text-lg font-bold text-white">Параметры контракта</h2>
                         <div>
                             <label class="block text-xs uppercase text-gray-400 mb-2">Текст</label>
-                            <textarea id="calc-text" rows="8" placeholder="Вставьте текст контракта..." 
+                            <textarea id="calc-text" rows="8" placeholder="Вставьте text контракта..." 
                                       class="w-full bg-[#100b0b] border border-red-950 rounded-lg p-3 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-red-500 resize-none"
                                       oninput="calculateContract()"></textarea>
                         </div>
@@ -441,7 +444,6 @@ def dashboard():
                 }
             }
 
-            // Плавное изменение количества стрелочками
             function adjustCount(inputId, amount) {
                 const input = document.getElementById(inputId);
                 const max = parseInt(input.max);
@@ -474,10 +476,14 @@ def dashboard():
                 document.getElementById('res-employee-sum').innerText = employeeSum.toLocaleString() + ' $';
             }
 
-            async function toggleContractPause(contractCode, checkboxElement) {
-                // Блокируем фоновое авто-обновление и сам чекбокс, чтобы избежать багов синхронизации
+            // Исправленная и безопасная обработка паузы конкретного контракта
+            async function toggleContractPause(checkboxElement) {
                 isUpdating = true;
                 checkboxElement.disabled = true;
+                
+                const contractCode = checkboxElement.dataset.code;
+                // Сохраняем состояние ДО клика, чтобы если запрос упадет — вернуть обратно
+                const previousState = !checkboxElement.checked; 
 
                 try {
                     const response = await fetch('/api/toggle-contract-pause', {
@@ -486,14 +492,15 @@ def dashboard():
                         body: JSON.stringify({ code: contractCode })
                     });
                     
-                    if (response.ok) {
-                        // Меняем статус визуально мгновенно на фронтенде без ожидания ответа от stats
-                        checkboxElement.checked = !checkboxElement.checked;
+                    if (!response.ok) {
+                        // Если сервер выдал ошибку, возвращаем галочку назад
+                        checkboxElement.checked = previousState;
                     }
                 } catch (e) {
                     console.error("Ошибка при изменении состояния паузы:", e);
+                    checkboxElement.checked = previousState;
                 } finally {
-                    // Задержка в 300мс гарантирует, что сервер успел сохранить стейт до отправки нового GET-запроса
+                    checkboxElement.disabled = false;
                     setTimeout(async () => {
                         isUpdating = false;
                         await updateStats(true);
@@ -511,24 +518,33 @@ def dashboard():
                     document.getElementById('server-time').innerText = data.server_time;
                     document.getElementById('total-contracts-count').innerText = data.total_contracts;
                     
+                    // Показ или скрытие глобального HUD-баннера на самом верху
+                    const globalPauseBanner = document.getElementById('global-pause-banner');
                     const sysStatusText = document.getElementById('system-status-text');
+                    
                     if (data.is_paused) {
-                        sysStatusText.className = "text-lg font-bold text-red-500";
-                        sysStatusText.innerText = "НА ПАУЗЕ";
+                        if (globalPauseBanner) globalPauseBanner.classList.remove('hidden');
+                        if (sysStatusText) {
+                            sysStatusText.className = "text-lg font-bold text-red-500";
+                            sysStatusText.innerText = "НА ПАУЗЕ";
+                        }
                     } else {
-                        sysStatusText.className = "text-lg font-bold text-green-400";
-                        sysStatusText.innerText = "РАБОТАЕТ";
+                        if (globalPauseBanner) globalPauseBanner.classList.add('hidden');
+                        if (sysStatusText) {
+                            sysStatusText.className = "text-lg font-bold text-green-400";
+                            sysStatusText.innerText = "РАБОТАЕТ";
+                        }
                     }
 
                     const btnPause = document.getElementById('ctrl-btn-pause');
                     const statPause = document.getElementById('ctrl-pause-status');
                     if (btnPause && statPause) {
                         if (data.is_paused) {
-                            btnPause.className = "w-full bg-emerald-600 text-white font-bold py-2 px-4 rounded-lg text-sm flex justify-between items-center";
-                            statPause.innerText = "ВКЛЮЧИТЬ";
+                            btnPause.className = "w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg text-sm flex justify-between items-center transition";
+                            statPause.innerText = "ВКЛЮЧИТЬ РАССЫЛКУ";
                         } else {
-                            btnPause.className = "w-full bg-red-600 text-white font-bold py-2 px-4 rounded-lg text-sm flex justify-between items-center";
-                            statPause.innerText = "ПАУЗА";
+                            btnPause.className = "w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg text-sm flex justify-between items-center transition";
+                            statPause.innerText = "ПОСТАВИТЬ НА ПАУЗУ";
                         }
                     }
 
@@ -536,13 +552,18 @@ def dashboard():
                     const pausedListContainer = document.getElementById('paused-contracts-list');
                     if (pausedListContainer) {
                         if (uniqueCodes.length > 0) {
-                            // Отрисовка списка. onchange теперь НЕ меняет checked сам по себе сразу (это делается в toggleContractPause)
                             pausedListContainer.innerHTML = uniqueCodes.map(code => {
                                 const isChecked = data.paused_contracts.includes(code);
+                                // Безопасное экранирование двойных кавычек в data-атрибуте
+                                const safeCode = code.replace(/"/g, '&quot;');
                                 return `
                                     <label class="flex items-center justify-between bg-[#100b0b] p-2 rounded border border-red-950/40 cursor-pointer select-none">
                                         <span class="text-xs text-gray-300 font-semibold">${code}</span>
-                                        <input type="checkbox" onchange="toggleContractPause('${code}', this); return false;" ${isChecked ? 'checked' : ''} class="w-4 h-4 rounded bg-[#0f0a0a] border-red-900 text-red-600 focus:ring-0">
+                                        <input type="checkbox" 
+                                               data-code="${safeCode}" 
+                                               onchange="toggleContractPause(this)" 
+                                               ${isChecked ? 'checked' : ''} 
+                                               class="w-4 h-4 rounded bg-[#0f0a0a] border-red-900 text-red-600 focus:ring-0">
                                     </label>
                                 `;
                             }).join('');
@@ -607,17 +628,20 @@ def dashboard():
 
             async function togglePause() { 
                 isUpdating = true;
+                const btnPause = document.getElementById('ctrl-btn-pause');
+                if (btnPause) btnPause.disabled = true;
+
                 try {
                     await fetch('/api/toggle-pause', { method: 'POST' }); 
                 } finally {
                     setTimeout(() => {
                         isUpdating = false;
+                        if (btnPause) btnPause.disabled = false;
                         updateStats(true); 
                     }, 300);
                 }
             }
 
-            // Фоновое авто-обновление раз в 2 секунды
             setInterval(() => updateStats(false), 2000);
             updateStats(true);
         </script>
