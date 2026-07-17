@@ -24,7 +24,7 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "WN063")
 
 system_state = {
     "is_paused": False,
-    "skipped_contracts": []
+    "paused_contracts": []  # Список кодовых названий контрактов, которые сейчас приостановлены
 }
 
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
@@ -37,7 +37,6 @@ def get_msk_time():
 
 def parse_database():
     contracts = []
-    # Формируем абсолютно чистую строку URL без лишних пробелов и символов
     clean_sheet_id = SHEET_ID.strip().replace("'", "").replace('"', "").replace(" ", "")
     export_url = f"https://docs.google.com/spreadsheets/d/{clean_sheet_id}/export?format=csv&gid=0".strip()
     now = get_msk_time()
@@ -56,6 +55,9 @@ def parse_database():
             if len(row) < 3:
                 continue
             times_str, text, date_range = row[0], row[1], row[2]
+            
+            # Читаем четвертую колонку (кодовое имя). Если ее нет или она пустая — пишем "Без названия"
+            contract_code = row[3].strip() if len(row) > 3 and row[3].strip() else "Без названия"
             
             if "время" in times_str.lower() or "текст" in text.lower():
                 continue
@@ -85,7 +87,8 @@ def parse_database():
                     "times": times,
                     "text": clean_text,
                     "date_range": date_range.strip(),
-                    "date_status": date_status
+                    "date_status": date_status,
+                    "code": contract_code  # Сохраняем код контракта в базу
                 })
     except Exception as e:
         logger.error(f"Ошибка при импорте/парсинге Google Таблицы: {e}")
@@ -123,8 +126,8 @@ def get_next_contract_info():
                 if t_datetime < now:
                     t_datetime += timedelta(days=1)
                 
-                skip_key = f"{t_str}_{contract['date_range']}"
-                is_skipped = skip_key in system_state["skipped_contracts"]
+                # Проверяем, на паузе ли конкретно этот контракт по его кодовому названию
+                is_skipped = (contract["code"] != "Без названия" and contract["code"] in system_state["paused_contracts"])
                 
                 upcoming_contracts.append({
                     "datetime": t_datetime,
@@ -132,7 +135,7 @@ def get_next_contract_info():
                     "text": contract["text"],
                     "date_range": contract["date_range"],
                     "is_skipped": is_skipped,
-                    "skip_key": skip_key
+                    "code": contract["code"]
                 })
             except Exception as e:
                 logger.error(f"Ошибка парсинга времени {t_str}: {e}")
@@ -184,7 +187,7 @@ def dashboard():
                     {% if session.get('authorized') %}
                     <button onclick="openControlModal()" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-1.5 px-4 rounded text-xs transition shadow flex items-center space-x-1.5">
                         <i class="fa-solid fa-sliders"></i>
-                        <span>Панель управления</span>
+                        <span>Управление паузами</span>
                     </button>
                     {% endif %}
                 </div>
@@ -211,8 +214,8 @@ def dashboard():
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div class="bg-[#181111] glow-card rounded-lg p-5 flex items-center justify-between">
                         <div>
-                            <p class="text-gray-400 text-xs uppercase">Статус системы</p>
-                            <p class="text-lg font-bold text-green-400">РАБОТАЕТ</p>
+                            <p class="text-gray-400 text-xs uppercase">Общий статус</p>
+                            <p id="system-status-text" class="text-lg font-bold">РАБОТАЕТ</p>
                         </div>
                     </div>
                     <div class="bg-[#181111] glow-card rounded-lg p-5 flex items-center justify-between">
@@ -242,6 +245,7 @@ def dashboard():
                         <table class="w-full text-left border-collapse table-auto">
                             <thead>
                                 <tr class="border-b border-red-900/40 text-gray-400 text-xs uppercase">
+                                    <th class="py-3 px-4 w-[150px]">Код</th>
                                     <th class="py-3 px-4 w-[220px]">Время</th>
                                     <th class="py-3 px-4 w-full">Текст контракта</th>
                                     <th class="py-3 px-4 whitespace-nowrap">Срок действия</th>
@@ -249,7 +253,7 @@ def dashboard():
                                 </tr>
                             </thead>
                             <tbody id="contracts-table-body" class="divide-y divide-red-900/20 text-sm">
-                                <tr><td colspan="4" class="text-center py-8 text-gray-500">Загрузка...</td></tr>
+                                <tr><td colspan="5" class="text-center py-8 text-gray-500">Загрузка...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -341,18 +345,27 @@ def dashboard():
         <div id="control-modal" class="hidden fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
             <div class="bg-[#181111] border border-red-900/60 rounded-xl max-w-md w-full p-6 space-y-4">
                 <div class="flex justify-between items-center">
-                    <h3 class="text-white font-bold">Панель управления</h3>
+                    <h3 class="text-white font-bold">Управление контрактами</h3>
                     <button onclick="closeControlModal()" class="text-gray-500 hover:text-white">&times;</button>
                 </div>
-                <div class="space-y-3">
-                    <button id="ctrl-btn-pause" onclick="togglePause()" class="w-full text-white font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center shadow">
-                        <span>Пауза</span><span id="ctrl-pause-status">...</span>
-                    </button>
-                    <button onclick="toggleSkipNext()" class="w-full bg-[#241a1a] text-red-400 font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center">
-                        <span>Пропустить контракт</span>
-                    </button>
-                    <a href="https://docs.google.com/spreadsheets/d/{{ sheet_id }}/edit?gid=0#gid=0" target="_blank" class="w-full bg-[#1b221d] text-emerald-400 font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center">
-                        <span>Открыть таблицу</span>
+                
+                <div class="space-y-4">
+                    <div>
+                        <p class="text-xs text-gray-400 uppercase mb-2">Глобальное состояние</p>
+                        <button id="ctrl-btn-pause" onclick="togglePause()" class="w-full text-white font-bold py-2 px-4 rounded-lg text-sm flex justify-between items-center shadow">
+                            <span>Общая пауза</span><span id="ctrl-pause-status">...</span>
+                        </button>
+                    </div>
+
+                    <div>
+                        <p class="text-xs text-gray-400 uppercase mb-2">Приостановка по кодовому названию</p>
+                        <div id="paused-contracts-list" class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                            <p class="text-xs text-gray-500">Загрузка контрактов...</p>
+                        </div>
+                    </div>
+
+                    <a href="https://docs.google.com/spreadsheets/d/{{ sheet_id }}/edit?gid=0#gid=0" target="_blank" class="w-full bg-[#1b221d] text-emerald-400 font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center text-center">
+                        <span>Открыть Google Таблицу</span><i class="fa-solid fa-up-right-from-square"></i>
                     </a>
                 </div>
             </div>
@@ -360,7 +373,7 @@ def dashboard():
 
         <script>
             let currentTab = 'monitoring';
-            let contractRate = 300; // По умолчанию выбран Зеленый (300$)
+            let contractRate = 300; 
 
             function switchTab(tabName) {
                 currentTab = tabName;
@@ -420,6 +433,15 @@ def dashboard():
                 document.getElementById('res-employee-sum').innerText = employeeSum.toLocaleString() + ' $';
             }
 
+            async function toggleContractPause(contractCode) {
+                await fetch('/api/toggle-contract-pause', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code: contractCode })
+                });
+                updateStats();
+            }
+
             async function updateStats() {
                 try {
                     const response = await fetch('/api/stats');
@@ -428,25 +450,55 @@ def dashboard():
                     document.getElementById('server-time').innerText = data.server_time;
                     document.getElementById('total-contracts-count').innerText = data.total_contracts;
                     
+                    // Общий статус системы
+                    const sysStatusText = document.getElementById('system-status-text');
+                    if (data.is_paused) {
+                        sysStatusText.className = "text-lg font-bold text-red-500";
+                        sysStatusText.innerText = "НА ПАУЗЕ";
+                    } else {
+                        sysStatusText.className = "text-lg font-bold text-green-400";
+                        sysStatusText.innerText = "РАБОТАЕТ";
+                    }
+
                     const btnPause = document.getElementById('ctrl-btn-pause');
                     const statPause = document.getElementById('ctrl-pause-status');
                     if (btnPause && statPause) {
                         if (data.is_paused) {
-                            btnPause.className = "w-full bg-emerald-600 text-white font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center";
+                            btnPause.className = "w-full bg-emerald-600 text-white font-bold py-2 px-4 rounded-lg text-sm flex justify-between items-center";
                             statPause.innerText = "ВКЛЮЧИТЬ";
                         } else {
-                            btnPause.className = "w-full bg-red-600 text-white font-bold py-2.5 px-4 rounded-lg text-sm flex justify-between items-center";
+                            btnPause.className = "w-full bg-red-600 text-white font-bold py-2 px-4 rounded-lg text-sm flex justify-between items-center";
                             statPause.innerText = "ПАУЗА";
                         }
                     }
 
+                    // Список паузы в модалке (только уникальные коды контрактов, исключая "Без названия")
+                    const uniqueCodes = [...new Set(data.all_contracts.map(c => c.code))].filter(code => code && code !== "Без названия");
+                    const pausedListContainer = document.getElementById('paused-contracts-list');
+                    if (pausedListContainer) {
+                        if (uniqueCodes.length > 0) {
+                            pausedListContainer.innerHTML = uniqueCodes.map(code => {
+                                const isChecked = data.paused_contracts.includes(code);
+                                return `
+                                    <label class="flex items-center justify-between bg-[#100b0b] p-2 rounded border border-red-950/40 cursor-pointer select-none">
+                                        <span class="text-xs text-gray-300 font-semibold">${code}</span>
+                                        <input type="checkbox" onchange="toggleContractPause('${code}')" ${isChecked ? 'checked' : ''} class="w-4 h-4 rounded bg-[#0f0a0a] border-red-900 text-red-600 focus:ring-0">
+                                    </label>
+                                `;
+                            }).join('');
+                        } else {
+                            pausedListContainer.innerHTML = '<p class="text-xs text-gray-500">Нет именованных контрактов в таблице</p>';
+                        }
+                    }
+
+                    // Следующий контракт
                     const nextContainer = document.getElementById('next-contract-container');
                     if (data.next_contract) {
                         const nc = data.next_contract;
-                        let badge = nc.is_skipped ? '<span class="bg-red-900/60 text-red-300 text-[10px] px-2 py-0.5 rounded whitespace-nowrap">ПРОПУЩЕН</span>' : `<span class="bg-yellow-900/40 text-yellow-500 text-[10px] px-2 py-0.5 rounded whitespace-nowrap">ЧЕРЕЗ ${nc.time_left}</span>`;
+                        let badge = nc.is_skipped ? '<span class="bg-red-900/60 text-red-300 text-[10px] px-2 py-0.5 rounded whitespace-nowrap">НА ПАУЗЕ</span>' : `<span class="bg-yellow-900/40 text-yellow-500 text-[10px] px-2 py-0.5 rounded whitespace-nowrap">ЧЕРЕЗ ${nc.time_left}</span>`;
                         nextContainer.innerHTML = `
                             <div class="flex justify-between text-xs text-gray-400 border-b border-red-900/10 pb-2">
-                                <span>Слот: <strong>${nc.time_str} МСК</strong> (${nc.date_range})</span>${badge}
+                                <span>Слот: <strong>${nc.time_str} МСК</strong> (${nc.date_range}) — <i>[${nc.code}]</i></span>${badge}
                             </div>
                             <div class="bg-[#100b0b] p-3 rounded border border-red-950 ${nc.is_skipped ? 'line-through text-gray-500' : 'text-gray-200'} text-sm">${nc.text}</div>
                         `;
@@ -454,13 +506,20 @@ def dashboard():
                         nextContainer.innerHTML = '<div class="text-center text-gray-500 text-sm">Нет active-контрактов</div>';
                     }
 
+                    // Таблица всех контрактов
                     const tableBody = document.getElementById('contracts-table-body');
                     if (data.all_contracts && data.all_contracts.length > 0) {
                         tableBody.innerHTML = data.all_contracts.map(c => {
                             let statusBadge = '<span class="inline-block bg-green-950/60 text-green-400 border border-green-900/60 text-[10px] font-bold px-2.5 py-1 rounded">Активен</span>';
                             let rowClass = "hover:bg-red-950/5";
                             
-                            if (c.date_status === 'last_day') {
+                            // Проверяем статус индивидуальной паузы
+                            const isIndividualPaused = data.paused_contracts.includes(c.code);
+                            
+                            if (isIndividualPaused) {
+                                statusBadge = '<span class="inline-block bg-yellow-950/60 text-yellow-500 border border-yellow-900/60 text-[10px] font-bold px-2.5 py-1 rounded">Пауза</span>';
+                                rowClass = "opacity-60 hover:bg-red-950/5";
+                            } else if (c.date_status === 'last_day') {
                                 statusBadge = '<span class="inline-block bg-amber-950/60 text-amber-400 border border-amber-900/60 text-[10px] font-bold px-2.5 py-1 rounded text-center leading-tight">Последний<br>день</span>';
                             } else if (c.date_status === 'expired') {
                                 statusBadge = '<span class="inline-block bg-red-950/60 text-red-400 border border-red-900/60 text-[10px] font-bold px-2.5 py-1 rounded">Просрочен</span>';
@@ -471,6 +530,7 @@ def dashboard():
 
                             return `
                                 <tr class="${rowClass}">
+                                    <td class="py-3 px-4 font-semibold text-red-400 text-xs break-all">[${c.code}]</td>
                                     <td class="py-3 px-4"><div class="flex flex-wrap gap-1.5 max-w-[210px]">${timeBadges}</div></td>
                                     <td class="py-3 px-4 text-gray-300 break-words max-w-xs md:max-w-xl">${c.text}</td>
                                     <td class="py-3 px-4 text-gray-400 whitespace-nowrap">${c.date_range}</td>
@@ -479,13 +539,12 @@ def dashboard():
                             `;
                         }).join('');
                     } else {
-                        tableBody.innerHTML = '<tr><td colspan="4" class="text-center py-8 text-gray-500">Нет контрактов в базе</td></tr>';
+                        tableBody.innerHTML = '<tr><td colspan="5" class="text-center py-8 text-gray-500">Нет контрактов в базе</td></tr>';
                     }
                 } catch (e) {}
             }
 
             async function togglePause() { await fetch('/api/toggle-pause', { method: 'POST' }); updateStats(); }
-            async function toggleSkipNext() { await fetch('/api/skip-next', { method: 'POST' }); updateStats(); closeControlModal(); }
 
             setInterval(updateStats, 2000);
             updateStats();
@@ -523,12 +582,13 @@ def api_stats():
             "date_range": next_c["date_range"],
             "time_left": time_left_str,
             "is_skipped": next_c["is_skipped"],
-            "skip_key": next_c["skip_key"]
+            "code": next_c["code"]
         }
     return jsonify({
         "server_time": now.strftime("%H:%M:%S"),
         "total_contracts": len(contracts),
         "is_paused": system_state["is_paused"],
+        "paused_contracts": system_state["paused_contracts"],
         "next_contract": next_contract_data,
         "all_contracts": contracts
     })
@@ -539,18 +599,21 @@ def toggle_pause_api():
         system_state["is_paused"] = not system_state["is_paused"]
     return jsonify({"success": True})
 
-@app.route('/api/skip-next', methods=['POST'])
-def skip_next_api():
+@app.route('/api/toggle-contract-pause', methods=['POST'])
+def toggle_contract_pause_api():
     if not session.get('authorized'):
         return jsonify({"error": "Unauthorized"}), 401
-    next_c = get_next_contract_info()
-    if next_c:
-        key = next_c["skip_key"]
-        if key in system_state["skipped_contracts"]:
-            system_state["skipped_contracts"].remove(key)
+    
+    data = request.get_json() or {}
+    contract_code = data.get("code")
+    
+    if contract_code and contract_code != "Без названия":
+        if contract_code in system_state["paused_contracts"]:
+            system_state["paused_contracts"].remove(contract_code)
         else:
-            system_state["skipped_contracts"].append(key)
-    return jsonify({"success": True})
+            system_state["paused_contracts"].append(contract_code)
+            
+    return jsonify({"success": True, "paused_contracts": system_state["paused_contracts"]})
 
 def send_discord_webhook(text):
     if not WEBHOOK_URL: return False
@@ -571,8 +634,10 @@ async def schedule_loop():
                     for contract in parse_database():
                         if contract["date_status"] == "expired":
                             continue
+                        # Если время совпадает
                         if current_time_str in contract["times"]:
-                            if f"{current_time_str}_{contract['date_range']}" not in system_state["skipped_contracts"]:
+                            # Проверяем, не стоит ли данный контракт на индивидуальной паузе
+                            if contract["code"] not in system_state["paused_contracts"]:
                                 send_discord_webhook(contract["text"])
                 last_sent_minute = now.minute
         except: pass
